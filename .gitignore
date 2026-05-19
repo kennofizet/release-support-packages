@@ -1,0 +1,7 @@
+# Documentation files (moved to gitignore as requested)
+*.md
+!README.md
+
+# Cursor rules files
+.cursorrules*
+.cursorignore

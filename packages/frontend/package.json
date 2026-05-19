@@ -1,0 +1,36 @@
+{
+  "name": "@kennofizet/release-support-frontend",
+  "version": "0.1.0",
+  "description": "Release support frontend package with runtime issue capture and draw-based reporter UI.",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./*": "./src/*"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "support",
+    "release",
+    "reporter",
+    "frontend"
+  ],
+  "author": "KennoFizet",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.1.2",
+    "html2canvas": "^1.4.1",
+    "vue": "^3.2.0"
+  },
+  "peerDependencies": {
+    "vue": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

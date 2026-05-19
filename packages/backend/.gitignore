@@ -1,0 +1,33 @@
+# Dependencies
+/vendor/
+composer.lock
+
+# Environment
+.env
+.env.backup
+.env.production
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.phpstorm.meta.php
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.phpunit.result.cache
+/coverage/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+.cache/
