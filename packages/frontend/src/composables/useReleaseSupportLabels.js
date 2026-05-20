@@ -69,6 +69,9 @@ export function useReleaseSupportLabels(languageRef) {
       timelineStatus: tr('widget.timeline.status'),
       timelineComment: tr('widget.timeline.comment'),
       drawingAlt: tr('widget.drawingAlt'),
+      viewDrawing: tr('widget.viewDrawing'),
+      drawingPrev: tr('widget.drawingPrev'),
+      drawingNext: tr('widget.drawingNext'),
       previewAlt: tr('widget.previewAlt'),
       titleCreate: tr('widget.titles.create'),
       titleDetail: tr('widget.titles.detail'),
@@ -113,6 +116,29 @@ export function useReleaseSupportLabels(languageRef) {
   function tagLabelFor(id) {
     const key = tagLabelKeys[String(id || 'other').toLowerCase()] || 'tagOther'
     return t.value[key] || t.value.tagOther
+  }
+
+  function normalizeTagId(tag) {
+    const id = String(tag || 'other').toLowerCase()
+    return REPORT_TAG_IDS.includes(id) ? id : 'other'
+  }
+
+  function titleForTag(tag) {
+    const id = normalizeTagId(tag)
+    const tr = translate.value
+    return tr(`widget.titles.byTag.${id}`, tr('widget.titles.create'))
+  }
+
+  function subtitleForTag(tag) {
+    const id = normalizeTagId(tag)
+    const tr = translate.value
+    return tr(`widget.formSubtitle.byTag.${id}`, tr('widget.formSubtitle.default'))
+  }
+
+  function titlePlaceholderForTag(tag) {
+    const id = normalizeTagId(tag)
+    const tr = translate.value
+    return tr(`widget.fields.titlePlaceholderByTag.${id}`, tr('widget.fields.titlePlaceholder'))
   }
 
   const statusLabelKeys = {
@@ -161,5 +187,17 @@ export function useReleaseSupportLabels(languageRef) {
     return entry.type
   }
 
-  return { t, tagOptions, tagLabelFor, statusLabelFor, drawLabels, versionBannerText, latestUpdateText, timelineLabel }
+  return {
+    t,
+    tagOptions,
+    tagLabelFor,
+    titleForTag,
+    subtitleForTag,
+    titlePlaceholderForTag,
+    statusLabelFor,
+    drawLabels,
+    versionBannerText,
+    latestUpdateText,
+    timelineLabel,
+  }
 }

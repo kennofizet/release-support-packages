@@ -1,13 +1,11 @@
 <template>
   <div class="rs-widget rs-root rs-ignore-capture" :class="{ 'rs-widget--dark': effectiveDarkMode, 'rs-root--dark': effectiveDarkMode }">
-    <button
+    <ReleaseSupportFabHandle
       v-show="!screenDrawing && !formOpen"
-      type="button"
-      class="rs-fab"
-      @click="openForm"
-    >
-      {{ t.fab }}
-    </button>
+      :label="t.fab"
+      :dark-mode="effectiveDarkMode"
+      @open="openForm"
+    />
 
     <ReleaseSupportDrawOverlay
       :open="screenDrawing"
@@ -31,6 +29,9 @@
       :latest-update-text="latestUpdateText"
       :tag-options="tagOptions"
       :selected-tag="form.tag"
+      :form-title="formTitle"
+      :form-subtitle="formSubtitle"
+      :title-placeholder="formTitlePlaceholder"
       @update:tag="form.tag = $event"
       @close="closeForm"
       @submit="submit"
@@ -55,6 +56,7 @@ import { useReleaseSupportTracker } from '../composables/useReleaseSupportTracke
 import { useReleaseSupportLabels } from '../composables/useReleaseSupportLabels'
 import { isOutdated } from '../utils/semver'
 import { getApiErrorMessage } from '../utils/apiErrorMessage'
+import ReleaseSupportFabHandle from './ReleaseSupportFabHandle.vue'
 import ReleaseSupportDrawOverlay from './ReleaseSupportDrawOverlay.vue'
 import ReleaseSupportFormModal from './ReleaseSupportFormModal.vue'
 import ReleaseSupportSuccessBanner from './ReleaseSupportSuccessBanner.vue'
@@ -85,8 +87,20 @@ const successMessageOverride = computed(
   () => props.successMessage || releaseSupportOptions?.successMessage || '',
 )
 
-const { t, tagOptions, drawLabels, versionBannerText: fmtVersionBanner, latestUpdateText: fmtLatestUpdate } =
-  useReleaseSupportLabels(effectiveLanguage)
+const {
+  t,
+  tagOptions,
+  drawLabels,
+  titleForTag,
+  subtitleForTag,
+  titlePlaceholderForTag,
+  versionBannerText: fmtVersionBanner,
+  latestUpdateText: fmtLatestUpdate,
+} = useReleaseSupportLabels(effectiveLanguage)
+
+const formTitle = computed(() => titleForTag(form.value.tag))
+const formSubtitle = computed(() => subtitleForTag(form.value.tag))
+const formTitlePlaceholder = computed(() => titlePlaceholderForTag(form.value.tag))
 
 const versionBannerText = computed(() => fmtVersionBanner(bootstrapData.value.latest_update?.version))
 const latestUpdateText = computed(() => fmtLatestUpdate(bootstrapData.value.latest_update?.version))

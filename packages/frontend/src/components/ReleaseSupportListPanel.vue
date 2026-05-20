@@ -242,6 +242,9 @@
                     :key="'img-' + i"
                     :src="d"
                     :alt="labels.drawingAlt"
+                    :view-label="labels.viewDrawing"
+                    clickable
+                    @open="openDrawingLightbox(i)"
                   />
                 </div>
               </div>
@@ -270,6 +273,21 @@
         </div>
       </template>
     </div>
+
+    <ReleaseSupportDrawingLightbox
+      :open="drawingLightboxOpen"
+      :sources="report?.drawings || []"
+      :index="drawingLightboxIndex"
+      :dark-mode="darkMode"
+      :alt="labels.drawingAlt"
+      :title="labels.screenshot"
+      :close-label="labels.closeAria"
+      :prev-label="labels.drawingPrev"
+      :next-label="labels.drawingNext"
+      @close="closeDrawingLightbox"
+      @prev="drawingLightboxIndex = Math.max(0, drawingLightboxIndex - 1)"
+      @next="drawingLightboxIndex = Math.min((report?.drawings?.length || 1) - 1, drawingLightboxIndex + 1)"
+    />
   </div>
 </template>
 
@@ -278,6 +296,7 @@ import { computed, ref, watch } from 'vue'
 import { filterConsoleLogs, formatConsoleLogLine } from '../utils/consoleLogs'
 import { filterReports, getReportTag, partitionReports } from '../utils/reportTags'
 import ReleaseSupportDrawingImg from './ReleaseSupportDrawingImg.vue'
+import ReleaseSupportDrawingLightbox from './ReleaseSupportDrawingLightbox.vue'
 
 const props = defineProps({
   mode: { type: String, required: true, validator: (v) => v === 'user' || v === 'dev' },
@@ -302,6 +321,17 @@ const searchQuery = ref('')
 const tagFilter = ref('all')
 const localStatus = ref('open')
 const localComment = ref('')
+const drawingLightboxOpen = ref(false)
+const drawingLightboxIndex = ref(0)
+
+function openDrawingLightbox(index) {
+  drawingLightboxIndex.value = index
+  drawingLightboxOpen.value = true
+}
+
+function closeDrawingLightbox() {
+  drawingLightboxOpen.value = false
+}
 
 const sourceReports = computed(() => (props.mode === 'dev' ? props.devReports : props.myReports))
 
@@ -376,6 +406,7 @@ watch(
       localStatus.value = r.status || 'open'
       localComment.value = ''
     }
+    closeDrawingLightbox()
   },
   { immediate: true },
 )

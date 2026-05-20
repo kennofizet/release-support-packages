@@ -1,5 +1,21 @@
 <template>
-  <img v-if="displaySrc" :src="displaySrc" :alt="alt" class="rs-drawing-img" loading="lazy" />
+  <button
+    v-if="displaySrc && clickable"
+    type="button"
+    class="rs-drawing-img-btn"
+    :aria-label="viewLabel || alt"
+    @click="$emit('open')"
+  >
+    <img :src="displaySrc" :alt="alt" class="rs-drawing-img" :class="{ 'rs-drawing-img--full': fullSize }" loading="lazy" />
+  </button>
+  <img
+    v-else-if="displaySrc"
+    :src="displaySrc"
+    :alt="alt"
+    class="rs-drawing-img"
+    :class="{ 'rs-drawing-img--full': fullSize }"
+    loading="lazy"
+  />
 </template>
 
 <script setup>
@@ -9,7 +25,12 @@ import { isInlineDrawingSrc, parseApiDrawingSrc } from '../utils/drawingUrl'
 const props = defineProps({
   src: { type: String, required: true },
   alt: { type: String, default: '' },
+  clickable: { type: Boolean, default: false },
+  fullSize: { type: Boolean, default: false },
+  viewLabel: { type: String, default: '' },
 })
+
+defineEmits(['open'])
 
 const releaseSupportApi = inject('releaseSupportApi', null)
 const displaySrc = ref('')

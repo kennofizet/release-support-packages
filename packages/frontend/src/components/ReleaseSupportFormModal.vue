@@ -12,8 +12,8 @@
         <header class="rs-form-modal__head">
           <div class="rs-form-modal__head-icon" aria-hidden="true">&#9998;</div>
           <div class="rs-form-modal__head-text">
-            <h2 id="rs-form-title">{{ labels.titleCreate }}</h2>
-            <p>Capture issues with screenshots and console context</p>
+            <h2 id="rs-form-title" :key="'title-' + selectedTag">{{ formTitle || labels.titleCreate }}</h2>
+            <p v-if="formSubtitle" :key="'sub-' + selectedTag" class="rs-form-modal__subtitle">{{ formSubtitle }}</p>
           </div>
           <button type="button" class="rs-icon-btn" :aria-label="labels.closeAria" @click="$emit('close')">&times;</button>
         </header>
@@ -57,7 +57,7 @@
                 v-model="form.title"
                 class="rs-input"
                 type="text"
-                :placeholder="labels.fieldTitlePlaceholder"
+                :placeholder="titlePlaceholder || labels.fieldTitlePlaceholder"
                 autocomplete="off"
               />
             </label>
@@ -122,6 +122,9 @@ defineProps({
   open: { type: Boolean, default: false },
   darkMode: { type: Boolean, default: false },
   labels: { type: Object, required: true },
+  formTitle: { type: String, default: '' },
+  formSubtitle: { type: String, default: '' },
+  titlePlaceholder: { type: String, default: '' },
   selectedTag: { type: String, default: 'bug' },
   form: { type: Object, required: true },
   drawings: { type: Array, default: () => [] },
