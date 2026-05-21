@@ -361,6 +361,38 @@ class ReleaseSupportService
     }
 
     /**
+     * Merge every resolved report waiting for a release (same defaults as dev release preview).
+     *
+     * @param  array<string, mixed>  $overrides  Optional keys: title, content, is_active, is_force, meta
+     * @return array<string, mixed> Version release detail (same shape as createVersionRelease)
+     */
+    public function createVersionReleaseMergeAllWaiting(?int $actorUserId = null, array $overrides = []): array
+    {
+        $preview = $this->getReleasePreview();
+        if (!$preview['can_create']) {
+            $blockers = $preview['blockers'] ?? [];
+            $message = is_array($blockers) && $blockers !== []
+                ? implode(' ', array_map('strval', $blockers))
+                : 'Cannot create a release.';
+            throw new \RuntimeException($message);
+        }
+
+        $ids = $preview['waiting_report_ids'] ?? [];
+        if (!is_array($ids) || $ids === []) {
+            throw new \InvalidArgumentException('no_waiting_reports');
+        }
+
+        return $this->createVersionRelease([
+            'report_ids' => array_values(array_map(static fn ($id) => (int) $id, $ids)),
+            'title' => $overrides['title'] ?? $preview['suggested_title'] ?? '',
+            'content' => $overrides['content'] ?? $preview['suggested_content'] ?? '',
+            'is_active' => $overrides['is_active'] ?? true,
+            'is_force' => $overrides['is_force'] ?? false,
+            'meta' => $overrides['meta'] ?? [],
+        ], $actorUserId);
+    }
+
+    /**
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */

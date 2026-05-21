@@ -167,9 +167,9 @@ class LogReleaseSupportActivity
 
 ---
 
-## Trait for host User model
+## Traits for host User model
 
-List a user's reports (GitHub-issue style, optional status filter):
+### `HasReleaseSupportReports` — reporter's own reports
 
 ```php
 use Kennofizet\ReleaseSupport\Traits\HasReleaseSupportReports;
@@ -179,8 +179,52 @@ class User extends Authenticatable
     use HasReleaseSupportReports;
 }
 
-// Paginated, with comments_count, optional status filter
 $reports = $user->getReleaseSupportReports('open', 20);
+```
+
+### `ManagesReleaseSupportAsDev` — dev workflow from app code
+
+Use on staff/dev `User` models whose IDs are in `RELEASE_SUPPORT_DEV_USER_IDS`:
+
+```php
+use Kennofizet\ReleaseSupport\Traits\HasReleaseSupportReports;
+use Kennofizet\ReleaseSupport\Traits\ManagesReleaseSupportAsDev;
+
+class User extends Authenticatable
+{
+    use HasReleaseSupportReports;
+    use ManagesReleaseSupportAsDev;
+}
+
+// Status (open, in_progress, resolved, closed, cancelled)
+$dev->releaseSupportUpdateReportStatus($reportId, 'resolved');
+
+// Dev comment on any report
+$dev->releaseSupportCommentOnReport($reportId, 'Fixed in build 42.');
+
+// Preview next version + waiting queue (same as GET dev/release-preview)
+$preview = $dev->releaseSupportReleasePreview();
+
+// Merge ALL waiting resolved reports — auto semver, default title & release notes
+$release = $dev->releaseSupportMergeAllWaitingReports();
+
+// Optional overrides
+$release = $dev->releaseSupportMergeAllWaitingReports([
+    'title' => 'Hotfix '.$preview['next_version'],
+    'content' => $preview['suggested_content'],
+    'is_force' => true,
+]);
+
+// Merge only selected report IDs (empty title/content → package defaults)
+$release = $dev->releaseSupportMergeReports([12, 15, 18]);
+
+if ($dev->isReleaseSupportDev()) { /* ... */ }
+```
+
+Service equivalent (e.g. Artisan command without a User instance):
+
+```php
+app(ReleaseSupportService::class)->createVersionReleaseMergeAllWaiting($actorUserId);
 ```
 
 ---
@@ -311,6 +355,6 @@ $payload = $service->getBootstrapPayload();
 | Migrations | `php artisan vendor:publish --tag=release-support-migrations` then `php artisan migrate` |
 | Dev users | Set `RELEASE_SUPPORT_DEV_USER_IDS` |
 | Hooks | `after_submitted_listeners`, `after_status_changed_listeners`, `after_comment_added_listeners`, `after_version_released_listeners` |
-| Model (optional) | `use HasReleaseSupportReports;` on User |
+| Model (optional) | `HasReleaseSupportReports` (reporter), `ManagesReleaseSupportAsDev` (staff) on User |
 
 Pair with **@kennofizet/release-support-frontend** for the reporter UI and background capture.
