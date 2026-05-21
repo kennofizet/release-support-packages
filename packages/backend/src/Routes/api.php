@@ -21,12 +21,16 @@ Route::prefix($prefix . '/' . $supportPrefix)
         Route::get('reports/{reportId}', [ReleaseSupportController::class, 'reportDetail']);
         Route::get('drawings/{reportId}/{filename}', [DrawingController::class, 'show'])
             ->where('filename', '[A-Za-z0-9._-]+');
+        Route::get('version-updates', [ReleaseSupportController::class, 'versionUpdates']);
+        Route::get('version-updates/{id}', [ReleaseSupportController::class, 'versionUpdateDetail']);
 
         Route::prefix('dev')->group(function () {
             Route::get('reports', [ReleaseSupportController::class, 'devReports']);
             Route::post('reports/{reportId}/status', [ReleaseSupportController::class, 'devUpdateStatus']);
             Route::post('reports/{reportId}/comments', [ReleaseSupportController::class, 'devAddComment']);
+            Route::get('release-preview', [ReleaseSupportController::class, 'devReleasePreview']);
             Route::get('version-updates', [ReleaseSupportController::class, 'devVersionUpdates']);
+            Route::get('version-updates/{id}', [ReleaseSupportController::class, 'devVersionUpdateDetail']);
             Route::post('version-updates', [ReleaseSupportController::class, 'devCreateVersionUpdate']);
             Route::put('version-updates/{id}', [ReleaseSupportController::class, 'devUpdateVersionUpdate']);
             Route::get('metrics', [ReleaseSupportController::class, 'devMetrics']);

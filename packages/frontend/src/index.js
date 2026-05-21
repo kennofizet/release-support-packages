@@ -4,7 +4,9 @@ import { createReleaseSupportApi } from './api'
 import ReleaseSupportWidget from './components/ReleaseSupportWidget.vue'
 import ReleaseSupportList from './components/ReleaseSupportList.vue'
 import ReleaseSupportListPanel from './components/ReleaseSupportListPanel.vue'
+import ReleaseSupportDevOpsPanel from './components/ReleaseSupportDevOpsPanel.vue'
 import { useReleaseSupportTracker } from './composables/useReleaseSupportTracker'
+import { useReleaseSupportReports } from './composables/useReleaseSupportReports'
 
 const installedApps = new WeakMap()
 
@@ -28,11 +30,15 @@ function createApiFacade() {
     submitReport: (...args) => impl?.submitReport(...args),
     myReports: (...args) => impl?.myReports(...args),
     reportDetail: (...args) => impl?.reportDetail(...args),
+    versionUpdates: (...args) => impl?.versionUpdates(...args),
+    versionUpdateDetail: (...args) => impl?.versionUpdateDetail(...args),
     fetchDrawing: (...args) => impl?.fetchDrawing(...args),
     devReports: (...args) => impl?.devReports(...args),
     devUpdateStatus: (...args) => impl?.devUpdateStatus(...args),
     devAddComment: (...args) => impl?.devAddComment(...args),
+    devReleasePreview: (...args) => impl?.devReleasePreview(...args),
     devVersionUpdates: (...args) => impl?.devVersionUpdates(...args),
+    devVersionUpdateDetail: (...args) => impl?.devVersionUpdateDetail(...args),
     devCreateVersionUpdate: (...args) => impl?.devCreateVersionUpdate(...args),
     devUpdateVersionUpdate: (...args) => impl?.devUpdateVersionUpdate(...args),
     devMetrics: (...args) => impl?.devMetrics(...args),
@@ -95,6 +101,8 @@ export {
   ReleaseSupportWidget,
   ReleaseSupportList,
   ReleaseSupportListPanel,
+  ReleaseSupportDevOpsPanel,
+  useReleaseSupportReports,
   useReleaseSupportTracker,
 }
 export { compareSemver, isOutdated, parseSemver } from './utils/semver'

@@ -1,6 +1,9 @@
 export const REPORT_TAG_IDS = ['bug', 'feature', 'question', 'improvement', 'other']
 
-const CLOSED_STATUSES = new Set(['closed', 'resolved'])
+/** Matches ReleaseSupportReport::inactiveStatuses() on the backend. */
+export const INACTIVE_STATUSES = new Set(['resolved', 'closed', 'cancelled'])
+
+const byNewestId = (a, b) => Number(b.id) - Number(a.id)
 
 export function getReportTag(report) {
   const tag = report?.tag ?? report?.meta?.tag
@@ -8,21 +11,38 @@ export function getReportTag(report) {
   return 'other'
 }
 
+export function isInactiveReport(report) {
+  return INACTIVE_STATUSES.has(String(report?.status || '').toLowerCase())
+}
+
+/** @deprecated Use isInactiveReport */
 export function isClosedReport(report) {
-  return CLOSED_STATUSES.has(String(report?.status || '').toLowerCase())
+  return isInactiveReport(report)
+}
+
+/** Active (open / in_progress) first, inactive statuses at the bottom; newest id within each group. */
+export function sortReportsActiveFirst(reports) {
+  const active = []
+  const inactive = []
+  for (const r of reports || []) {
+    if (isInactiveReport(r)) inactive.push(r)
+    else active.push(r)
+  }
+  active.sort(byNewestId)
+  inactive.sort(byNewestId)
+  return [...active, ...inactive]
 }
 
 export function partitionReports(reports) {
   const active = []
-  const closed = []
+  const inactive = []
   for (const r of reports || []) {
-    if (isClosedReport(r)) closed.push(r)
+    if (isInactiveReport(r)) inactive.push(r)
     else active.push(r)
   }
-  const byNewest = (a, b) => Number(b.id) - Number(a.id)
-  active.sort(byNewest)
-  closed.sort(byNewest)
-  return { active, closed }
+  active.sort(byNewestId)
+  inactive.sort(byNewestId)
+  return { active, closed: inactive }
 }
 
 export function filterReports(reports, { query = '', tag = '' } = {}) {

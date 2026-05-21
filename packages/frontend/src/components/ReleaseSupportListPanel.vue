@@ -1,6 +1,63 @@
 ﻿<template>
   <div class="rs-list-panel" :class="{ 'rs-list-panel--dark': darkMode, 'rs-root--dark': darkMode }">
     <div v-if="view === 'list'" class="rs-list-layout">
+      <nav v-if="mode === 'user'" class="rs-user-hub__tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="rs-user-hub__tab"
+          :class="{ 'rs-user-hub__tab--active': userTab === 'reports' }"
+          :aria-selected="userTab === 'reports'"
+          @click="$emit('update:user-tab', 'reports')"
+        >
+          {{ labels.userTabReports }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="rs-user-hub__tab"
+          :class="{ 'rs-user-hub__tab--active': userTab === 'updates' }"
+          :aria-selected="userTab === 'updates'"
+          @click="$emit('update:user-tab', 'updates')"
+        >
+          {{ labels.userTabUpdates }}
+        </button>
+      </nav>
+
+      <ReleaseSupportDevOpsPanel
+        v-if="mode === 'dev'"
+        :tab="devTab"
+        :labels="labels"
+        :metrics="devMetrics"
+        :metrics-loading="devMetricsLoading"
+        :release-preview="releasePreview"
+        :release-preview-loading="releasePreviewLoading"
+        :version-items="versionUpdates"
+        :versions-loading="versionUpdatesLoading"
+        :version-saving="versionSaving"
+        :selected-version="selectedVersion"
+        :version-detail-loading="versionDetailLoading"
+        :create-version-release="createVersionRelease"
+        :update-version="updateVersion"
+        :load-version-detail="loadVersionDetail"
+        :version-pagination="versionPagination"
+        @update:tab="$emit('update:dev-tab', $event)"
+        @update:versions-page="$emit('update:versions-page', $event)"
+      />
+
+      <ReleaseSupportUserUpdates
+        v-if="mode === 'user' && userTab === 'updates'"
+        :labels="labels"
+        :items="userVersionItems"
+        :pagination="userVersionPagination"
+        :loading="userVersionUpdatesLoading"
+        :detail-loading="userVersionDetailLoading"
+        :selected="selectedUserVersion"
+        :load-detail="loadUserVersionDetail"
+        @update:page="$emit('update:user-versions-page', $event)"
+      />
+
+      <template v-if="showReportsPanel">
       <div class="rs-list-filters">
         <div class="rs-search">
           <span class="rs-search__icon" aria-hidden="true">⌕</span>
@@ -34,43 +91,48 @@
         </div>
       </div>
 
-      <div v-if="filteredCount === 0" class="rs-empty">
+      <div v-if="reportsLoading" class="rs-dev-ops__loading">
+        {{ labels.loading }}
+      </div>
+
+      <div v-else-if="reportsTotal === 0" class="rs-empty">
         <div class="rs-empty__icon" aria-hidden="true">◇</div>
         <p>{{ mode === 'dev' ? labels.emptyDev : labels.emptyMy }}</p>
       </div>
 
-      <template v-else>
-        <section v-if="activeReports.length" class="rs-list-section">
+      <template v-else-if="reportsTotal > 0">
+        <ul v-if="mode === 'user' && filteredCount" class="rs-user-report-list">
+          <li v-for="r in filteredSource" :key="'u-' + r.id">
+            <button
+              type="button"
+              class="rs-user-report-card"
+              :class="{ 'rs-user-report-card--muted': isInactiveReport(r) }"
+              @click="$emit('open-detail', r.id)"
+            >
+              <div class="rs-user-report-card__top">
+                <span class="rs-tag-chip rs-tag-chip--xs" :class="`rs-tag-chip--${reportTag(r)}`">
+                  {{ tagLabelFor(reportTag(r)) }}
+                </span>
+                <span class="rs-badge rs-user-report-card__status" :data-status="r.status">
+                  {{ statusLabelFor(r.status) }}
+                </span>
+              </div>
+              <h4 class="rs-user-report-card__title">{{ r.title }}</h4>
+              <p class="rs-user-report-card__meta">
+                <span v-if="r.created_at">{{ formatDateShort(r.created_at) }}</span>
+                <span v-if="r.app_version">{{ labels.fieldAppVersion }} {{ r.app_version }}</span>
+              </p>
+            </button>
+          </li>
+        </ul>
+
+        <section v-else-if="activeReports.length" class="rs-list-section">
           <h3 class="rs-list-section__title">
             {{ labels.sectionActive }}
             <span class="rs-list-section__count">{{ activeReports.length }}</span>
           </h3>
 
-          <div v-if="mode === 'user'" class="rs-issue-list">
-            <button
-              v-for="r in activeReports"
-              :key="'a-' + r.id"
-              type="button"
-              class="rs-issue-row"
-              @click="$emit('open-detail', r.id)"
-            >
-              <span class="rs-issue-row__icon" :data-status="r.status" aria-hidden="true" />
-              <div class="rs-issue-row__main">
-                <div class="rs-issue-row__title-row">
-                  <span class="rs-tag-chip rs-tag-chip--xs" :class="`rs-tag-chip--${reportTag(r)}`">{{ tagLabelFor(reportTag(r)) }}</span>
-                  <span class="rs-issue-row__title">{{ r.title }}</span>
-                </div>
-                <div class="rs-issue-row__meta">
-                  <span><strong>#{{ r.id }}</strong></span>
-                  <span v-if="r.app_version">{{ labels.fieldAppVersion }}: {{ r.app_version }}</span>
-                  <span v-if="r.created_at">{{ formatDate(r.created_at) }}</span>
-                </div>
-              </div>
-              <span class="rs-badge" :data-status="r.status">{{ statusLabelFor(r.status) }}</span>
-            </button>
-          </div>
-
-          <div v-else class="rs-dev-list">
+          <div class="rs-dev-list">
             <article v-for="r in activeReports" :key="'da-' + r.id" class="rs-dev-row">
               <button type="button" class="rs-dev-row__head" @click="$emit('open-detail', r.id)">
                 <span class="rs-issue-row__icon" :data-status="r.status" aria-hidden="true" />
@@ -82,6 +144,7 @@
                   <p class="rs-issue-row__meta">
                     <span>{{ reporterLabel(r) }}</span>
                     <span v-if="r.app_version">{{ labels.fieldAppVersion }}: {{ r.app_version }}</span>
+                    <span v-if="r.merge_state === 'waiting_merge'" class="rs-tag-chip rs-tag-chip--xs rs-tag-chip--feature">{{ labels.releaseWaitingBadge }}</span>
                     <span v-if="r.created_at">{{ formatDate(r.created_at) }}</span>
                   </p>
                 </div>
@@ -93,6 +156,7 @@
                   <option value="in_progress">{{ labels.statusInProgress }}</option>
                   <option value="resolved">{{ labels.statusResolved }}</option>
                   <option value="closed">{{ labels.statusClosed }}</option>
+                  <option value="cancelled">{{ labels.statusCancelled }}</option>
                 </select>
                 <button type="button" class="rs-btn rs-btn--primary rs-btn--sm" @click="$emit('update-status', r.id, devStatusMap[r.id])">
                   {{ labels.statusAction }}
@@ -106,7 +170,7 @@
           </div>
         </section>
 
-        <section v-if="closedReports.length" class="rs-list-section rs-list-section--closed">
+        <section v-if="mode === 'dev' && closedReports.length" class="rs-list-section rs-list-section--closed">
           <h3 class="rs-list-section__title">
             {{ labels.sectionClosed }}
             <span class="rs-list-section__count">{{ closedReports.length }}</span>
@@ -135,7 +199,22 @@
             </button>
           </div>
         </section>
+
+        <p v-if="filteredCount === 0" class="rs-dev-ops__empty">{{ labels.paginationNoMatches }}</p>
+
+        <ReleaseSupportPagination
+          :page="reportsPagination.current_page"
+          :last-page="reportsPagination.last_page"
+          :total="reportsPagination.total"
+          :per-page="reportsPagination.per_page"
+          :loading="reportsLoading"
+          :labels="labels"
+          @update:page="$emit('update:reports-page', $event)"
+        />
       </template>
+      </template>
+
+      <div v-if="mode === 'dev' && devTab !== 'reports'" class="rs-dev-ops-spacer" />
     </div>
 
     <div v-else-if="view === 'detail'" class="rs-detail-layout">
@@ -201,6 +280,7 @@
                 <option value="in_progress">{{ labels.statusInProgress }}</option>
                 <option value="resolved">{{ labels.statusResolved }}</option>
                 <option value="closed">{{ labels.statusClosed }}</option>
+                <option value="cancelled">{{ labels.statusCancelled }}</option>
               </select>
               <button type="button" class="rs-btn rs-btn--primary rs-btn--sm rs-detail-sidebar__btn" @click="$emit('update-status', report.id, localStatus)">
                 {{ labels.updateStatus }}
@@ -294,9 +374,18 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { filterConsoleLogs, formatConsoleLogLine } from '../utils/consoleLogs'
-import { filterReports, getReportTag, partitionReports } from '../utils/reportTags'
+import {
+  filterReports,
+  getReportTag,
+  isInactiveReport,
+  partitionReports,
+  sortReportsActiveFirst,
+} from '../utils/reportTags'
+import ReleaseSupportDevOpsPanel from './ReleaseSupportDevOpsPanel.vue'
+import ReleaseSupportUserUpdates from './ReleaseSupportUserUpdates.vue'
 import ReleaseSupportDrawingImg from './ReleaseSupportDrawingImg.vue'
 import ReleaseSupportDrawingLightbox from './ReleaseSupportDrawingLightbox.vue'
+import ReleaseSupportPagination from './ReleaseSupportPagination.vue'
 
 const props = defineProps({
   mode: { type: String, required: true, validator: (v) => v === 'user' || v === 'dev' },
@@ -307,15 +396,50 @@ const props = defineProps({
   statusLabelFor: { type: Function, required: true },
   view: { type: String, default: 'list' },
   myReports: { type: Array, default: () => [] },
+  myReportsPagination: { type: Object, default: () => ({ current_page: 1, last_page: 1, per_page: 20, total: 0 }) },
+  myReportsLoading: { type: Boolean, default: false },
   devReports: { type: Array, default: () => [] },
+  devReportsPagination: { type: Object, default: () => ({ current_page: 1, last_page: 1, per_page: 20, total: 0 }) },
+  devReportsLoading: { type: Boolean, default: false },
   devStatusMap: { type: Object, default: () => ({}) },
   devCommentMap: { type: Object, default: () => ({}) },
   report: { type: Object, default: null },
   detailLoading: { type: Boolean, default: false },
   timelineLabelFn: { type: Function, default: null },
+  devTab: { type: String, default: 'reports' },
+  devMetrics: { type: Object, default: null },
+  devMetricsLoading: { type: Boolean, default: false },
+  releasePreview: { type: Object, default: null },
+  releasePreviewLoading: { type: Boolean, default: false },
+  versionUpdates: { type: Array, default: () => [] },
+  versionUpdatesLoading: { type: Boolean, default: false },
+  versionSaving: { type: Boolean, default: false },
+  selectedVersion: { type: Object, default: null },
+  versionDetailLoading: { type: Boolean, default: false },
+  createVersionRelease: { type: Function, default: () => async () => false },
+  updateVersion: { type: Function, default: () => async () => false },
+  loadVersionDetail: { type: Function, default: async () => {} },
+  versionPagination: { type: Object, default: () => ({ current_page: 1, last_page: 1, per_page: 20, total: 0 }) },
+  userTab: { type: String, default: 'reports' },
+  userVersionItems: { type: Array, default: () => [] },
+  userVersionPagination: { type: Object, default: () => ({ current_page: 1, last_page: 1, per_page: 20, total: 0 }) },
+  userVersionUpdatesLoading: { type: Boolean, default: false },
+  selectedUserVersion: { type: Object, default: null },
+  userVersionDetailLoading: { type: Boolean, default: false },
+  loadUserVersionDetail: { type: Function, default: async () => {} },
 })
 
-const emit = defineEmits(['navigate', 'open-detail', 'update-status', 'add-comment'])
+const emit = defineEmits([
+  'navigate',
+  'open-detail',
+  'update-status',
+  'add-comment',
+  'update:dev-tab',
+  'update:reports-page',
+  'update:versions-page',
+  'update:user-versions-page',
+  'update:user-tab',
+])
 
 const searchQuery = ref('')
 const tagFilter = ref('all')
@@ -335,14 +459,30 @@ function closeDrawingLightbox() {
 
 const sourceReports = computed(() => (props.mode === 'dev' ? props.devReports : props.myReports))
 
+const reportsPagination = computed(() =>
+  props.mode === 'dev' ? props.devReportsPagination : props.myReportsPagination,
+)
+
+const reportsLoading = computed(() =>
+  props.mode === 'dev' ? props.devReportsLoading : props.myReportsLoading,
+)
+
+const reportsTotal = computed(() => Number(reportsPagination.value?.total) || 0)
+
 const filteredSource = computed(() =>
-  filterReports(sourceReports.value, { query: searchQuery.value, tag: tagFilter.value }),
+  sortReportsActiveFirst(
+    filterReports(sourceReports.value, { query: searchQuery.value, tag: tagFilter.value }),
+  ),
 )
 
 const partitioned = computed(() => partitionReports(filteredSource.value))
 const activeReports = computed(() => partitioned.value.active)
 const closedReports = computed(() => partitioned.value.closed)
 const filteredCount = computed(() => filteredSource.value.length)
+
+const showReportsPanel = computed(() =>
+  props.mode === 'dev' ? props.devTab === 'reports' : props.userTab === 'reports',
+)
 
 const detailTag = computed(() => getReportTag(props.report || {}))
 
@@ -428,6 +568,17 @@ function formatDate(value) {
     const d = new Date(value)
     if (Number.isNaN(d.getTime())) return String(value)
     return d.toLocaleString()
+  } catch {
+    return String(value)
+  }
+}
+
+function formatDateShort(value) {
+  if (!value) return ''
+  try {
+    const d = new Date(value)
+    if (Number.isNaN(d.getTime())) return String(value)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   } catch {
     return String(value)
   }

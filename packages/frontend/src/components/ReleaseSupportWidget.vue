@@ -11,8 +11,9 @@
       :open="screenDrawing"
       :dark-mode="effectiveDarkMode"
       :labels="drawLabels"
+      :scroll-state="drawScrollState"
       @save="onDrawSaved"
-      @cancel="screenDrawing = false"
+      @cancel="onDrawCancel"
     />
 
     <ReleaseSupportFormModal
@@ -56,6 +57,7 @@ import { useReleaseSupportTracker } from '../composables/useReleaseSupportTracke
 import { useReleaseSupportLabels } from '../composables/useReleaseSupportLabels'
 import { isOutdated } from '../utils/semver'
 import { getApiErrorMessage } from '../utils/apiErrorMessage'
+import { captureScrollState } from '../utils/screenCapture'
 import ReleaseSupportFabHandle from './ReleaseSupportFabHandle.vue'
 import ReleaseSupportDrawOverlay from './ReleaseSupportDrawOverlay.vue'
 import ReleaseSupportFormModal from './ReleaseSupportFormModal.vue'
@@ -107,6 +109,7 @@ const latestUpdateText = computed(() => fmtLatestUpdate(bootstrapData.value.late
 
 const formOpen = ref(false)
 const screenDrawing = ref(false)
+const drawScrollState = ref(null)
 const submitting = ref(false)
 const submitError = ref('')
 const successOpen = ref(false)
@@ -139,13 +142,20 @@ function closeForm() {
 }
 
 function openScreenDraw() {
+  drawScrollState.value = captureScrollState()
   formOpen.value = false
   screenDrawing.value = true
+}
+
+function onDrawCancel() {
+  screenDrawing.value = false
+  drawScrollState.value = null
 }
 
 function onDrawSaved(dataUrl) {
   if (dataUrl) drawings.value.push(dataUrl)
   screenDrawing.value = false
+  drawScrollState.value = null
   formOpen.value = true
 }
 

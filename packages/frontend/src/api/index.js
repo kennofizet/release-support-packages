@@ -42,6 +42,8 @@ export function createReleaseSupportApi(backendUrl, token) {
     submitReport: (payload) => api.post('/reports', payload),
     myReports: (params = {}) => api.get('/reports/my', { params }),
     reportDetail: (reportId) => api.get(`/reports/${reportId}`),
+    versionUpdates: (params = {}) => api.get('/version-updates', { params }),
+    versionUpdateDetail: (id) => api.get(`/version-updates/${id}`),
     fetchDrawing: async (reportId, filename) => {
       const res = await api.get(`/drawings/${reportId}/${encodeURIComponent(filename)}`, {
         responseType: 'blob',
@@ -52,7 +54,9 @@ export function createReleaseSupportApi(backendUrl, token) {
     devReports: (params = {}) => api.get('/dev/reports', { params }),
     devUpdateStatus: (reportId, status) => api.post(`/dev/reports/${reportId}/status`, { status }),
     devAddComment: (reportId, comment) => api.post(`/dev/reports/${reportId}/comments`, { comment }),
+    devReleasePreview: () => api.get('/dev/release-preview'),
     devVersionUpdates: (params = {}) => api.get('/dev/version-updates', { params }),
+    devVersionUpdateDetail: (id) => api.get(`/dev/version-updates/${id}`),
     devCreateVersionUpdate: (payload) => api.post('/dev/version-updates', payload),
     devUpdateVersionUpdate: (id, payload) => api.put(`/dev/version-updates/${id}`, payload),
     devMetrics: (days = 30) => api.get('/dev/metrics', { params: { days } }),

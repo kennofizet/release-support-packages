@@ -6,6 +6,9 @@ use Kennofizet\PackagesCore\Core\Model\BaseModelActions;
 use Kennofizet\PackagesCore\Models\User;
 use Kennofizet\ReleaseSupport\Contracts\AfterIssueReportSubmittedListener;
 use Kennofizet\ReleaseSupport\Events\IssueReportSubmitted;
+use Kennofizet\ReleaseSupport\Events\ReportCommentAdded;
+use Kennofizet\ReleaseSupport\Events\ReportStatusChanged;
+use Kennofizet\ReleaseSupport\Events\VersionReleased;
 use Kennofizet\ReleaseSupport\Jobs\RunAfterIssueReportSubmittedListeners;
 use Kennofizet\ReleaseSupport\Models\ReleaseSupportReport;
 use Kennofizet\ReleaseSupport\Models\ReleaseSupportReportComment;
@@ -14,7 +17,10 @@ use Kennofizet\ReleaseSupport\Models\ReleaseSupportVersionUpdate;
 use Kennofizet\ReleaseSupport\Support\SensitiveDataSanitizer;
 use Kennofizet\ReleaseSupport\Support\SemverHelper;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class ReleaseSupportService
 {
@@ -135,11 +141,11 @@ class ReleaseSupportService
 
     public function getMyReports(int $userId, ?string $status = null, int $perPage = 20): array
     {
-        $query = $this->reportListQuery()
-            ->where('user_id', $userId)
-            ->orderByDesc('id');
+        $query = $this->reportListQuery()->where('user_id', $userId);
         if ($status !== null && $status !== '') {
             $query->where('status', $status);
+        } else {
+            $this->applyReportListDisplayOrder($query);
         }
 
         return $this->paginateReportList($query, $perPage);
@@ -147,9 +153,11 @@ class ReleaseSupportService
 
     public function getAllReports(?string $status = null, int $perPage = 20): array
     {
-        $query = $this->reportListQuery()->orderByDesc('id');
+        $query = $this->reportListQuery();
         if ($status !== null && $status !== '') {
             $query->where('status', $status);
+        } else {
+            $this->applyReportListDisplayOrder($query);
         }
 
         return $this->paginateReportList($query, $perPage);
@@ -188,13 +196,7 @@ class ReleaseSupportService
 
     public function updateReportStatus(int $reportId, string $status, ?int $actorUserId = null): ReleaseSupportReport
     {
-        $allowed = [
-            ReleaseSupportReport::STATUS_OPEN,
-            ReleaseSupportReport::STATUS_IN_PROGRESS,
-            ReleaseSupportReport::STATUS_RESOLVED,
-            ReleaseSupportReport::STATUS_CLOSED,
-        ];
-        if (!in_array($status, $allowed, true)) {
+        if (!in_array($status, ReleaseSupportReport::allStatuses(), true)) {
             throw new \InvalidArgumentException('Invalid status');
         }
 
@@ -211,6 +213,14 @@ class ReleaseSupportService
         $report->save();
 
         $this->logStatusChange($report, $from, $status, $actorUserId ?? BaseModelActions::currentUserId());
+
+        $actorId = $actorUserId ?? BaseModelActions::currentUserId();
+        $this->dispatchStatusChangedEvent($report, $from, $status, $actorId);
+        $this->runConfiguredListeners('release-support.after_status_changed_listeners', $report, [
+            'from_status' => $from,
+            'to_status' => $status,
+            'actor_user_id' => $actorId,
+        ]);
 
         return $report;
     }
@@ -233,23 +243,195 @@ class ReleaseSupportService
 
         $nameMap = $this->resolveUserDisplayNames([$userId]);
 
-        return $this->formatCommentRecord($entity, $nameMap);
+        $formatted = $this->formatCommentRecord($entity, $nameMap);
+
+        $report = ReleaseSupportReport::query()->findOrFail($reportId);
+        $this->dispatchCommentAddedEvent($report, $entity);
+        $this->runConfiguredListeners('release-support.after_comment_added_listeners', $report, [
+            'comment' => $formatted,
+            'actor_user_id' => $userId,
+        ]);
+
+        return $formatted;
+    }
+
+    public function listPublicVersionUpdates(int $perPage = 20): array
+    {
+        $pager = ReleaseSupportVersionUpdate::query()
+            ->where('is_active', true)
+            ->orderByDesc('id')
+            ->paginate(max(1, $perPage));
+
+        $items = [];
+        foreach ($pager->items() as $row) {
+            if ($row instanceof ReleaseSupportVersionUpdate) {
+                $items[] = $this->formatPublicVersionSummary($row);
+            }
+        }
+
+        return [
+            'items' => array_values(array_filter($items)),
+            'meta' => [
+                'current_page' => (int) $pager->currentPage(),
+                'last_page' => (int) $pager->lastPage(),
+                'per_page' => (int) $pager->perPage(),
+                'total' => (int) $pager->total(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getPublicVersionUpdateDetail(int $id): ?array
+    {
+        $entity = ReleaseSupportVersionUpdate::query()
+            ->where('is_active', true)
+            ->find($id);
+
+        if (!$entity) {
+            return null;
+        }
+
+        return $this->formatPublicVersionDetail($entity);
     }
 
     public function listVersionUpdates(int $perPage = 20): array
     {
-        $pager = ReleaseSupportVersionUpdate::query()->orderByDesc('id')->paginate(max(1, $perPage));
-        return $this->formatPager($pager, false);
+        $pager = ReleaseSupportVersionUpdate::query()
+            ->withCount('mergedReports')
+            ->orderByDesc('id')
+            ->paginate(max(1, $perPage));
+
+        $items = [];
+        foreach ($pager->items() as $row) {
+            if ($row instanceof ReleaseSupportVersionUpdate) {
+                $items[] = $this->formatVersionUpdateSummary($row);
+            }
+        }
+
+        return [
+            'items' => array_values(array_filter($items)),
+            'meta' => [
+                'current_page' => (int) $pager->currentPage(),
+                'last_page' => (int) $pager->lastPage(),
+                'per_page' => (int) $pager->perPage(),
+                'total' => (int) $pager->total(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getVersionUpdateDetail(int $id): ?array
+    {
+        $entity = ReleaseSupportVersionUpdate::query()->with([
+            'mergedReports' => fn ($q) => $this->applyMergedReportsListQuery($q),
+        ])->find($id);
+
+        return $entity ? $this->formatVersionUpdateDetail($entity) : null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getReleasePreview(): array
+    {
+        $blockers = $this->getReleaseBlockers();
+        $waitingCount = $blockers['waiting_merge_count'];
+        $waiting = $this->getWaitingMergeReports();
+        $previewLimit = $this->waitingMergePreviewLimit();
+        $latest = ReleaseSupportVersionUpdate::query()->orderByDesc('id')->first();
+        $nextVersion = SemverHelper::nextReleaseVersion($latest ? (string) $latest->version : null);
+
+        $allWaitingIds = $this->getWaitingMergeReportIds();
+
+        return [
+            'can_create' => $blockers['can_create'],
+            'blockers' => $blockers['reasons'],
+            'next_version' => $nextVersion,
+            'waiting_merge_count' => $waitingCount,
+            'waiting_report_ids' => $allWaitingIds,
+            'waiting_reports' => $waiting,
+            'waiting_reports_truncated' => $waitingCount > $previewLimit,
+            'suggested_title' => $this->buildReleaseTitle($nextVersion, $waitingCount),
+            'suggested_content' => $this->buildReleaseNotesFromReports($waiting),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function createVersionRelease(array $payload, ?int $actorUserId = null): array
+    {
+        return DB::transaction(function () use ($payload, $actorUserId) {
+            $waiting = $this->resolveMergeReportsForRelease($payload, lock: true);
+            $mergedIds = $waiting->map(static fn (ReleaseSupportReport $r) => (int) $r->id)->all();
+
+            $latest = ReleaseSupportVersionUpdate::query()->orderByDesc('id')->lockForUpdate()->first();
+            $version = SemverHelper::nextReleaseVersion($latest ? (string) $latest->version : null);
+            $noteRows = $waiting->map(fn (ReleaseSupportReport $r) => $this->formatMergedReportRow($r))->all();
+            $notes = $this->buildReleaseNotesFromReports($noteRows);
+
+            $title = trim((string) ($payload['title'] ?? ''));
+            if ($title === '') {
+                $title = $this->buildReleaseTitle($version, count($mergedIds));
+            }
+
+            $content = trim((string) ($payload['content'] ?? ''));
+            if ($content === '') {
+                $content = $notes;
+            }
+
+            $entity = new ReleaseSupportVersionUpdate();
+            $entity->version = $version;
+            $entity->title = $title;
+            $entity->content = $content;
+            $entity->is_force = (bool) ($payload['is_force'] ?? false);
+            $entity->is_active = (bool) ($payload['is_active'] ?? true);
+            $entity->meta = SensitiveDataSanitizer::sanitizeLooseMeta(
+                $this->normalizeArrayPayload($payload['meta'] ?? []),
+            );
+            $entity->save();
+
+            $now = Carbon::now();
+            ReleaseSupportReport::query()
+                ->whereIn('id', $mergedIds)
+                ->update([
+                    'version_update_id' => (int) $entity->id,
+                    'merged_at' => $now,
+                    'updated_at' => $now,
+                ]);
+
+            $entity->loadCount('mergedReports');
+            $entity->load(['mergedReports' => fn ($q) => $this->applyMergedReportsListQuery($q)]);
+
+            $actorId = $actorUserId ?? BaseModelActions::currentUserId();
+            $this->dispatchVersionReleasedEvent($entity, $mergedIds, $actorId);
+            $this->runConfiguredListeners('release-support.after_version_released_listeners', $entity, [
+                'merged_report_ids' => $mergedIds,
+                'actor_user_id' => $actorId,
+            ]);
+
+            return $this->formatVersionUpdateDetail($entity);
+        });
     }
 
     public function saveVersionUpdate(array $payload, ?int $id = null): ReleaseSupportVersionUpdate
     {
-        $version = trim((string) ($payload['version'] ?? ''));
-        if ($version === '') {
-            throw new \InvalidArgumentException('version is required');
+        $entity = $id ? ReleaseSupportVersionUpdate::query()->findOrFail($id) : new ReleaseSupportVersionUpdate();
+
+        if ($id) {
+            $version = (string) $entity->version;
+        } else {
+            $version = trim((string) ($payload['version'] ?? ''));
+            if ($version === '') {
+                throw new \InvalidArgumentException('version is required');
+            }
         }
 
-        $entity = $id ? ReleaseSupportVersionUpdate::query()->findOrFail($id) : new ReleaseSupportVersionUpdate();
         $entity->version = $version;
         $entity->title = (string) ($payload['title'] ?? '');
         $entity->content = (string) ($payload['content'] ?? '');
@@ -363,12 +545,12 @@ class ReleaseSupportService
 
     private function runAfterSubmittedListeners(ReleaseSupportReport $report): void
     {
-        if (config('release-support.queue_after_report_listeners', false)) {
+        if (config('release-support.queue_listeners', false)) {
             RunAfterIssueReportSubmittedListeners::dispatch((int) $report->id);
             return;
         }
 
-        $listeners = config('release-support.after_report_submitted_listeners', []);
+        $listeners = config('release-support.after_submitted_listeners', []);
         if (!is_array($listeners)) {
             return;
         }
@@ -442,6 +624,9 @@ class ReleaseSupportService
             'status' => (string) $report->status,
             'app_version' => (string) $report->app_version,
             'resolved_at' => $report->resolved_at?->toIso8601String(),
+            'version_update_id' => $report->version_update_id !== null ? (int) $report->version_update_id : null,
+            'merged_at' => $report->merged_at?->toIso8601String(),
+            'merge_state' => $this->reportMergeState($report),
             'captured_logs' => $includeCapturedLogs ? ($report->captured_logs ?? []) : [],
             'captured_context' => $report->captured_context ?? [],
             'drawings' => $this->drawingStorage->urlsForResponse($report->drawings ?? [], (int) $report->id),
@@ -469,6 +654,23 @@ class ReleaseSupportService
         return ReleaseSupportReport::query()->select(
             $this->qualifiedReportListColumns($table)
         );
+    }
+
+    /**
+     * Active reports first (open, in_progress), inactive at bottom; newest id within each group.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<ReleaseSupportReport>  $query
+     */
+    private function applyReportListDisplayOrder($query): void
+    {
+        $inactive = ReleaseSupportReport::inactiveStatuses();
+        $bindings = implode(', ', array_fill(0, count($inactive), '?'));
+        $query
+            ->orderByRaw(
+                "CASE WHEN status IN ({$bindings}) THEN 1 ELSE 0 END ASC",
+                $inactive,
+            )
+            ->orderByDesc('id');
     }
 
     /**
@@ -541,7 +743,330 @@ class ReleaseSupportService
             'comments_count' => (int) ($report->comments_count ?? 0),
             'created_at' => $report->created_at?->toIso8601String(),
             'tag' => $this->reportTagFromMeta($report->meta),
+            'version_update_id' => $report->version_update_id !== null ? (int) $report->version_update_id : null,
+            'merged_at' => $report->merged_at?->toIso8601String(),
+            'merge_state' => $this->reportMergeState($report),
         ];
+    }
+
+    /**
+     * @return Builder<ReleaseSupportReport>
+     */
+    private function waitingMergePreviewLimit(): int
+    {
+        return max(1, (int) config('release-support.waiting_merge_preview_limit', 100));
+    }
+
+    /**
+     * @return Builder<ReleaseSupportReport>
+     */
+    private function waitingMergeReportsQuery(): Builder
+    {
+        return ReleaseSupportReport::query()
+            ->select(ReleaseSupportReport::mergeListColumns())
+            ->whereIn('status', ReleaseSupportReport::mergeEligibleStatuses())
+            ->whereNull('version_update_id');
+    }
+
+    /**
+     * @param  Builder<ReleaseSupportReport>|Relation<ReleaseSupportReport, mixed, mixed>  $query
+     */
+    private function applyMergedReportsListQuery(Builder|Relation $query): void
+    {
+        $query
+            ->select(ReleaseSupportReport::mergeListColumns())
+            ->orderByDesc('merged_at')
+            ->orderByDesc('id');
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function getWaitingMergeReports(): array
+    {
+        return $this->waitingMergeReportsQuery()
+            ->orderByDesc('resolved_at')
+            ->orderByDesc('id')
+            ->limit($this->waitingMergePreviewLimit())
+            ->get()
+            ->map(fn (ReleaseSupportReport $r) => $this->formatMergedReportRow($r))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array{can_create: bool, reasons: list<string>, active_count: int, waiting_merge_count: int}
+     */
+    private function getReleaseBlockers(): array
+    {
+        $waitingCount = (int) $this->waitingMergeReportsQuery()->count();
+
+        $reasons = [];
+        if ($waitingCount === 0) {
+            $reasons[] = 'no_waiting_reports';
+        }
+
+        return [
+            'can_create' => $waitingCount > 0,
+            'reasons' => $reasons,
+            'waiting_merge_count' => $waitingCount,
+        ];
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function getWaitingMergeReportIds(): array
+    {
+        return $this->waitingMergeReportsQuery()
+            ->orderByDesc('resolved_at')
+            ->orderByDesc('id')
+            ->pluck('id')
+            ->map(static fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return \Illuminate\Support\Collection<int, ReleaseSupportReport>
+     */
+    private function resolveMergeReportsForRelease(array $payload, bool $lock = false)
+    {
+        $raw = $payload['report_ids'] ?? null;
+        if (!is_array($raw) || $raw === []) {
+            throw new \InvalidArgumentException('Select at least one resolved report to merge.');
+        }
+
+        $ids = array_values(array_unique(array_filter(
+            array_map(static fn ($id) => (int) $id, $raw),
+            static fn (int $id) => $id > 0,
+        )));
+        if ($ids === []) {
+            throw new \InvalidArgumentException('Select at least one resolved report to merge.');
+        }
+
+        $query = $this->waitingMergeReportsQuery()
+            ->whereIn('id', $ids)
+            ->orderBy('id');
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        $reports = $query->get();
+        if ($reports->count() !== count($ids)) {
+            throw new \InvalidArgumentException('One or more selected reports are not eligible to merge.');
+        }
+
+        return $reports;
+    }
+
+    private function reportMergeState(ReleaseSupportReport $report): string
+    {
+        if ($report->version_update_id !== null) {
+            return 'merged';
+        }
+
+        $status = (string) $report->status;
+
+        if ($status === ReleaseSupportReport::STATUS_CANCELLED) {
+            return 'cancelled';
+        }
+        if ($status === ReleaseSupportReport::STATUS_CLOSED) {
+            return 'closed';
+        }
+        if ($status === ReleaseSupportReport::STATUS_RESOLVED) {
+            return 'waiting_merge';
+        }
+
+        return 'active';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatMergedReportRow(ReleaseSupportReport $report): array
+    {
+        return [
+            'id' => (int) $report->id,
+            'number' => (int) $report->id,
+            'title' => (string) $report->title,
+            'status' => (string) $report->status,
+            'tag' => $this->reportTagFromMeta($report->meta),
+            'user_id' => (int) $report->user_id,
+            'resolved_at' => $report->resolved_at?->toIso8601String(),
+            'merged_at' => $report->merged_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $reports
+     */
+    private function buildReleaseNotesFromReports(array $reports): string
+    {
+        if ($reports === []) {
+            return '';
+        }
+
+        $lines = ['## Merged reports', ''];
+        foreach ($reports as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            $title = trim((string) ($row['title'] ?? ''));
+            $tag = trim((string) ($row['tag'] ?? 'other'));
+            $lines[] = sprintf('- [#%d] %s (%s)', $id, $title !== '' ? $title : 'Untitled', $tag);
+        }
+
+        return implode("\n", $lines);
+    }
+
+    private function buildReleaseTitle(string $version, int $count): string
+    {
+        return sprintf('Release %s — %d merged report%s', $version, $count, $count === 1 ? '' : 's');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatPublicVersionSummary(ReleaseSupportVersionUpdate $entity): array
+    {
+        $content = trim((string) $entity->content);
+
+        return [
+            'id' => (int) $entity->id,
+            'version' => (string) $entity->version,
+            'title' => (string) $entity->title,
+            'excerpt' => $this->excerptText($content, 200),
+            'created_at' => $entity->created_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatPublicVersionDetail(ReleaseSupportVersionUpdate $entity): array
+    {
+        return [
+            'id' => (int) $entity->id,
+            'version' => (string) $entity->version,
+            'title' => (string) $entity->title,
+            'content' => (string) $entity->content,
+            'created_at' => $entity->created_at?->toIso8601String(),
+        ];
+    }
+
+    private function excerptText(string $text, int $maxLen): string
+    {
+        if ($text === '') {
+            return '';
+        }
+        if (strlen($text) <= $maxLen) {
+            return $text;
+        }
+
+        return rtrim(substr($text, 0, $maxLen - 1)) . '…';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatVersionUpdateSummary(?ReleaseSupportVersionUpdate $entity): array
+    {
+        if (!$entity) {
+            return [];
+        }
+
+        $mergedCount = (int) ($entity->merged_reports_count ?? $entity->mergedReports()->count());
+
+        return [
+            'id' => (int) $entity->id,
+            'version' => (string) $entity->version,
+            'title' => (string) $entity->title,
+            'content' => (string) $entity->content,
+            'is_force' => (bool) $entity->is_force,
+            'is_active' => (bool) $entity->is_active,
+            'merges_count' => $mergedCount,
+            'created_at' => $entity->created_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatVersionUpdateDetail(ReleaseSupportVersionUpdate $entity): array
+    {
+        $summary = $this->formatVersionUpdateSummary($entity);
+        $reports = $entity->relationLoaded('mergedReports')
+            ? $entity->mergedReports
+            : tap($entity->mergedReports(), fn ($q) => $this->applyMergedReportsListQuery($q))->get();
+
+        $userIds = $reports->pluck('user_id')->map(static fn ($id) => (int) $id)->all();
+        $nameMap = $this->resolveUserDisplayNames($userIds);
+
+        $merges = $reports->map(function (ReleaseSupportReport $report) use ($nameMap) {
+            $row = $this->formatMergedReportRow($report);
+            $row['user_name'] = $nameMap[(int) $report->user_id] ?? null;
+
+            return $row;
+        })->values()->all();
+
+        $summary['merges'] = $merges;
+
+        return $summary;
+    }
+
+    private function dispatchStatusChangedEvent(
+        ReleaseSupportReport $report,
+        string $from,
+        string $to,
+        ?int $actorUserId,
+    ): void {
+        $class = (string) config('release-support.report_status_changed_event_class', ReportStatusChanged::class);
+        event(new $class($report, $from, $to, $actorUserId));
+    }
+
+    private function dispatchCommentAddedEvent(
+        ReleaseSupportReport $report,
+        ReleaseSupportReportComment $comment,
+    ): void {
+        $class = (string) config('release-support.report_comment_added_event_class', ReportCommentAdded::class);
+        event(new $class($report, $comment));
+    }
+
+    /**
+     * @param  list<int>  $mergedReportIds
+     */
+    private function dispatchVersionReleasedEvent(
+        ReleaseSupportVersionUpdate $versionUpdate,
+        array $mergedReportIds,
+        ?int $actorUserId,
+    ): void {
+        $class = (string) config('release-support.version_released_event_class', VersionReleased::class);
+        event(new $class($versionUpdate, $mergedReportIds, $actorUserId));
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function runConfiguredListeners(string $configKey, object $subject, array $context = []): void
+    {
+        if (config('release-support.queue_listeners', false)) {
+            return;
+        }
+
+        $listeners = config($configKey, []);
+        if (!is_array($listeners)) {
+            return;
+        }
+
+        foreach ($listeners as $class) {
+            if (!is_string($class) || !class_exists($class)) {
+                continue;
+            }
+            $instance = app()->make($class);
+            if (method_exists($instance, 'handle')) {
+                $instance->handle($subject, $context);
+            }
+        }
     }
 
     /**

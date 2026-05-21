@@ -70,7 +70,13 @@ User table mapping comes from **packages-core** (`table_user`, `user_col_name`) 
 | `drawings_path` | Folder under disk root (default `release-support/drawings`) |
 | `max_drawing_bytes` | Max decoded image size per drawing (default 5MB) |
 | `report_event_class` | Event dispatched after report create (default `IssueReportSubmitted`) |
-| `after_report_submitted_listeners` | Classes implementing `AfterIssueReportSubmittedListener` |
+| `report_status_changed_event_class` | Event when dev changes report status (default `ReportStatusChanged`) |
+| `report_comment_added_event_class` | Event when dev adds a comment (default `ReportCommentAdded`) |
+| `version_released_event_class` | Event when a version release merges completed reports (default `VersionReleased`) |
+| `after_submitted_listeners` | Classes implementing `AfterIssueReportSubmittedListener` |
+| `after_status_changed_listeners` | Callable listeners: `handle($subject, array $context)` |
+| `after_comment_added_listeners` | Callable listeners: `handle($subject, array $context)` |
+| `after_version_released_listeners` | Callable listeners: `handle($subject, array $context)` |
 
 ---
 
@@ -104,7 +110,7 @@ For a private disk (`local`), the API returns relative paths like `drawings/{rep
 After a report is saved, the package:
 
 1. Dispatches `IssueReportSubmitted` (or class from `report_event_class`).
-2. Runs each class in `after_report_submitted_listeners` that implements:
+2. Runs each class in `after_submitted_listeners` that implements:
 
 ```php
 use Kennofizet\ReleaseSupport\Contracts\AfterIssueReportSubmittedListener;
@@ -122,8 +128,40 @@ class NotifyTeamOnIssueReport implements AfterIssueReportSubmittedListener
 Register in config:
 
 ```php
-'after_report_submitted_listeners' => [
+'after_submitted_listeners' => [
     \App\Listeners\NotifyTeamOnIssueReport::class,
+],
+```
+
+### Status, comment, and version events
+
+When a dev updates status or adds a comment, the package dispatches the configured event class, then runs `after_status_changed_listeners` / `after_comment_added_listeners`. Each listener receives the event instance and a context array (report id, old/new status, comment text, actor user id, etc.).
+
+When a dev creates a **version release** (merge), the package dispatches `VersionReleased` (or `version_released_event_class`) and runs `after_version_released_listeners`.
+
+Override event classes via `.env`:
+
+```env
+RELEASE_SUPPORT_STATUS_CHANGED_EVENT_CLASS=\App\Events\MyReportStatusChanged
+RELEASE_SUPPORT_COMMENT_ADDED_EVENT_CLASS=\App\Events\MyReportCommentAdded
+RELEASE_SUPPORT_VERSION_RELEASED_EVENT_CLASS=\App\Events\MyVersionReleased
+```
+
+Example generic listener:
+
+```php
+class LogReleaseSupportActivity
+{
+    public function handle(object $subject, array $context): void
+    {
+        // $subject is the dispatched event; $context has ids and payloads
+    }
+}
+```
+
+```php
+'after_version_released_listeners' => [
+    \App\Listeners\LogReleaseSupportActivity::class,
 ],
 ```
 
@@ -154,7 +192,30 @@ $reports = $user->getReleaseSupportReports('open', 20);
 | `open` | New report |
 | `in_progress` | Being handled |
 | `resolved` | Fixed / answered |
-| `closed` | Closed without further action |
+| `closed` | Closed without shipping in a release (not merged) |
+| `cancelled` | Refused / cancelled (not merged) |
+
+**Merge eligible**: `resolved` only, and not yet linked to a version (`version_update_id` is null).  
+**Waiting merge**: resolved reports in that queue.  
+**Open / in progress** reports do **not** block creating a release; pick which **resolved** reports to merge.  
+**Closed** and **cancelled** are not merge-eligible.
+
+---
+
+## Version releases (merge workflow)
+
+Releases work like merging completed “pull requests” into the next semver:
+
+1. Auto version: `0.0.1` → `0.0.2` → … → `0.0.99` → `0.1.0` (see `SemverHelper::nextReleaseVersion()`).
+2. **Create release** when at least one **resolved** report is waiting merge (open reports are allowed).
+3. On create, pass `report_ids` — only selected resolved reports are merged; release notes default to their titles.
+4. `GET dev/release-preview` returns `can_create`, `blockers`, `next_version`, `waiting_reports`, and suggested title/content.
+5. `POST dev/version-updates` creates the release (body: `title`, `content`, `is_active`, `is_force` — **no** manual `version`).
+6. `GET dev/version-updates/{id}` returns merged reports (PR-style list) for the detail UI.
+
+Run migrations after upgrade (adds `version_update_id`, `merged_at`, and index `rs_reports_waiting_merge_idx` on reports).
+
+`RELEASE_SUPPORT_WAITING_MERGE_PREVIEW_LIMIT` (default `100`) caps rows in `dev/release-preview` waiting list; merge on create still includes **all** waiting reports.
 
 ---
 
@@ -189,14 +250,18 @@ Requires header **`X-Knf-Token`** (packages-core). No zone header required.
 |--------|----------|--------|-------------|
 | GET | `bootstrap` | Authenticated | `force_show_reporter`, `capture_max_logs`, `is_dev_user`, `latest_update` |
 | POST | `reports` | Authenticated | Submit issue (see body below) |
-| GET | `reports/my?status=&per_page=` | Authenticated | Own reports (paginated, `per_page` ≤ 50) |
+| GET | `reports/my?status=&page=&per_page=` | Authenticated | Own reports (paginated, `per_page` ≤ 50) |
+| GET | `version-updates?page=&per_page=` | Authenticated | **Read-only** active release notes (users) |
+| GET | `version-updates/{id}` | Authenticated | **Read-only** release detail (users) |
 | GET | `reports/{reportId}` | Owner or dev | Detail with comments |
-| GET | `dev/reports?status=&per_page=` | Dev user | All reports |
+| GET | `dev/reports?status=&page=&per_page=` | Dev user | All reports (paginated) |
 | POST | `dev/reports/{reportId}/status` | Dev user | Body: `{ "status": "in_progress" }` |
 | POST | `dev/reports/{reportId}/comments` | Dev user | Body: `{ "comment": "..." }` |
-| GET | `dev/version-updates` | Dev user | Paginated version updates |
-| POST | `dev/version-updates` | Dev user | Create update notice |
-| PUT | `dev/version-updates/{id}` | Dev user | Update version notice |
+| GET | `dev/release-preview` | Dev user | Next version, blockers, waiting queue, suggested notes |
+| GET | `dev/version-updates?page=&per_page=` | Dev user | Paginated releases (`merges_count` per row) |
+| GET | `dev/version-updates/{id}` | Dev user | Release detail with `merges` (merged reports) |
+| POST | `dev/version-updates` | Dev user | **Merge & publish** release (auto version + merge all waiting) |
+| PUT | `dev/version-updates/{id}` | Dev user | Edit title, content, flags (version is read-only) |
 | GET | `dev/metrics?days=30` | Dev user | Reports/day, median hours to resolved, open count |
 
 `GET /bootstrap` accepts optional `?app_version=` and returns `version_outdated`, `version_compare`, `drawings_storage`.
@@ -245,7 +310,7 @@ $payload = $service->getBootstrapPayload();
 | Config | `php artisan vendor:publish --tag=release-support-config` |
 | Migrations | `php artisan vendor:publish --tag=release-support-migrations` then `php artisan migrate` |
 | Dev users | Set `RELEASE_SUPPORT_DEV_USER_IDS` |
-| Hooks | Add classes to `after_report_submitted_listeners` |
+| Hooks | `after_submitted_listeners`, `after_status_changed_listeners`, `after_comment_added_listeners`, `after_version_released_listeners` |
 | Model (optional) | `use HasReleaseSupportReports;` on User |
 
 Pair with **@kennofizet/release-support-frontend** for the reporter UI and background capture.

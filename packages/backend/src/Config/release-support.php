@@ -31,11 +31,35 @@ return [
 
     'capture_max_logs' => (int) env('RELEASE_SUPPORT_CAPTURE_MAX_LOGS', 200),
 
+    // Max rows returned in dev release-preview waiting queue (count is still full).
+    'waiting_merge_preview_limit' => (int) env('RELEASE_SUPPORT_WAITING_MERGE_PREVIEW_LIMIT', 100),
+
     'report_tags' => ['bug', 'feature', 'question', 'improvement', 'other'],
 
     'report_event_class' => env('RELEASE_SUPPORT_REPORT_EVENT_CLASS', \Kennofizet\ReleaseSupport\Events\IssueReportSubmitted::class),
 
+    'report_status_changed_event_class' => env(
+        'RELEASE_SUPPORT_STATUS_CHANGED_EVENT_CLASS',
+        \Kennofizet\ReleaseSupport\Events\ReportStatusChanged::class,
+    ),
+
+    'report_comment_added_event_class' => env(
+        'RELEASE_SUPPORT_COMMENT_ADDED_EVENT_CLASS',
+        \Kennofizet\ReleaseSupport\Events\ReportCommentAdded::class,
+    ),
+
+    'version_released_event_class' => env(
+        'RELEASE_SUPPORT_VERSION_RELEASED_EVENT_CLASS',
+        \Kennofizet\ReleaseSupport\Events\VersionReleased::class,
+    ),
+
     'queue_listeners' => (bool) env('RELEASE_SUPPORT_QUEUE_LISTENERS', false),
 
     'after_submitted_listeners' => [],
+
+    'after_status_changed_listeners' => [],
+
+    'after_comment_added_listeners' => [],
+
+    'after_version_released_listeners' => [],
 ];

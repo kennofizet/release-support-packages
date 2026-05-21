@@ -19,12 +19,7 @@ class UpdateReportStatusRequest extends FormRequest
             'status' => [
                 'required',
                 'string',
-                Rule::in([
-                    ReleaseSupportReport::STATUS_OPEN,
-                    ReleaseSupportReport::STATUS_IN_PROGRESS,
-                    ReleaseSupportReport::STATUS_RESOLVED,
-                    ReleaseSupportReport::STATUS_CLOSED,
-                ]),
+                Rule::in(ReleaseSupportReport::allStatuses()),
             ],
         ];
     }

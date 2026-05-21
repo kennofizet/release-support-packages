@@ -151,12 +151,12 @@ Embed on a support/admin page. Tabs: **My reports** and **Dev triage** (if dev u
 |--------|-------------|
 | `bootstrap()` | GET config + latest update |
 | `submitReport(payload)` | POST new report |
-| `myReports({ status, per_page })` | GET own reports |
+| `myReports({ status, page, per_page })` | GET own reports (paginated) |
 | `reportDetail(reportId)` | GET one report |
-| `devReports({ status, per_page })` | GET all reports (dev) |
+| `devReports({ status, page, per_page })` | GET all reports (dev, paginated) |
 | `devUpdateStatus(reportId, status)` | POST status change |
 | `devAddComment(reportId, comment)` | POST comment |
-| `devVersionUpdates({ per_page })` | GET version list |
+| `devVersionUpdates({ page, per_page })` | GET version list (paginated) |
 | `devCreateVersionUpdate(payload)` | POST version notice |
 | `devUpdateVersionUpdate(id, payload)` | PUT version notice |
 

@@ -26,7 +26,7 @@ class RunAfterIssueReportSubmittedListeners implements ShouldQueue
             return;
         }
 
-        $listeners = config('release-support.after_report_submitted_listeners', []);
+        $listeners = config('release-support.after_submitted_listeners', []);
         if (!is_array($listeners)) {
             return;
         }

@@ -20,14 +20,12 @@ class ListReportsRequest extends FormRequest
                 'nullable',
                 'string',
                 Rule::in([
-                    ReleaseSupportReport::STATUS_OPEN,
-                    ReleaseSupportReport::STATUS_IN_PROGRESS,
-                    ReleaseSupportReport::STATUS_RESOLVED,
-                    ReleaseSupportReport::STATUS_CLOSED,
+                    ...ReleaseSupportReport::allStatuses(),
                 ]),
             ],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
             'perPage' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'page' => ['nullable', 'integer', 'min:1'],
         ];
     }
 

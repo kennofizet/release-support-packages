@@ -24,4 +24,13 @@ class SemverHelperTest extends TestCase
     {
         $this->assertNull(SemverHelper::compare('bad', '1.0.0'));
     }
+
+    public function test_next_release_version_sequence(): void
+    {
+        $this->assertSame('0.0.1', SemverHelper::nextReleaseVersion(null));
+        $this->assertSame('0.0.2', SemverHelper::nextReleaseVersion('0.0.1'));
+        $this->assertSame('0.0.99', SemverHelper::nextReleaseVersion('0.0.98'));
+        $this->assertSame('0.1.0', SemverHelper::nextReleaseVersion('0.0.99'));
+        $this->assertSame('0.1.1', SemverHelper::nextReleaseVersion('0.1.0'));
+    }
 }

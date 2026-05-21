@@ -59,4 +59,22 @@ final class SemverHelper
         }
         return [(int) $m[1], (int) $m[2], (int) $m[3]];
     }
+
+    /**
+     * Package release sequence: 0.0.1 … 0.0.99 → 0.1.0 → 0.1.1 …
+     */
+    public static function nextReleaseVersion(?string $current): string
+    {
+        $parsed = self::parse($current);
+        if ($parsed === null) {
+            return '0.0.1';
+        }
+
+        [$major, $minor, $patch] = $parsed;
+        if ($patch < 99) {
+            return sprintf('%d.%d.%d', $major, $minor, $patch + 1);
+        }
+
+        return sprintf('%d.%d.0', $major, $minor + 1);
+    }
 }

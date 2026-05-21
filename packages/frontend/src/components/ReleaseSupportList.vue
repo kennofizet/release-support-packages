@@ -22,12 +22,42 @@
       :status-label-for="statusLabelFor"
       :view="view"
       :my-reports="myReports"
+      :my-reports-pagination="myReportsPagination"
+      :my-reports-loading="myReportsLoading"
       :dev-reports="devReports"
+      :dev-reports-pagination="devReportsPagination"
+      :dev-reports-loading="devReportsLoading"
       :dev-status-map="devStatus"
       :dev-comment-map="devCommentByReport"
       :report="selectedReport"
       :detail-loading="detailLoading"
       :timeline-label-fn="timelineLabel"
+      :dev-tab="devTab"
+      :dev-metrics="devMetrics"
+      :dev-metrics-loading="devMetricsLoading"
+      :release-preview="releasePreview"
+      :release-preview-loading="releasePreviewLoading"
+      :version-updates="versionUpdates"
+      :version-updates-loading="versionUpdatesLoading"
+      :version-saving="versionSaving"
+      :selected-version="selectedVersion"
+      :version-detail-loading="versionDetailLoading"
+      :create-version-release="createVersionRelease"
+      :update-version="updateVersionUpdate"
+      :load-version-detail="loadVersionDetail"
+      :version-pagination="versionUpdatesPagination"
+      :user-tab="userTab"
+      :user-version-items="userVersionUpdates"
+      :user-version-pagination="userVersionUpdatesPagination"
+      :user-version-updates-loading="userVersionUpdatesLoading"
+      :selected-user-version="selectedUserVersion"
+      :user-version-detail-loading="userVersionDetailLoading"
+      :load-user-version-detail="loadUserVersionDetail"
+      @update:dev-tab="devTab = $event"
+      @update:user-tab="onUserTab"
+      @update:reports-page="onReportsPage"
+      @update:versions-page="onVersionsPage"
+      @update:user-versions-page="onUserVersionsPage"
       @navigate="onNavigate"
       @open-detail="openDetail"
       @update-status="onUpdateStatus"
@@ -59,7 +89,11 @@ const tracker = useReleaseSupportTracker()
 const {
   isDevUser,
   myReports,
+  myReportsPagination,
+  myReportsLoading,
   devReports,
+  devReportsPagination,
+  devReportsLoading,
   devStatus,
   devCommentByReport,
   selectedReport,
@@ -67,10 +101,36 @@ const {
   setIsDevUser,
   refreshMyReports,
   openReportDetail,
+  devMetrics,
+  devMetricsLoading,
+  releasePreview,
+  releasePreviewLoading,
+  versionUpdates,
+  versionUpdatesPagination,
+  versionUpdatesLoading,
+  versionSaving,
+  selectedVersion,
+  versionDetailLoading,
+  userVersionUpdates,
+  userVersionUpdatesPagination,
+  userVersionUpdatesLoading,
+  selectedUserVersion,
+  userVersionDetailLoading,
   loadDevReports,
+  loadDevMetrics,
+  loadVersionUpdates,
+  loadReleasePreview,
+  loadVersionDetail,
+  loadUserVersionUpdates,
+  loadUserVersionDetail,
+  createVersionRelease,
+  updateVersionUpdate,
   updateStatus,
   submitComment,
 } = useReleaseSupportReports()
+
+const devTab = ref('reports')
+const userTab = ref('reports')
 
 const effectiveLanguage = computed(() => (isRef(props.language) ? props.language.value : props.language))
 const effectiveDarkMode = computed(() => (isRef(props.darkMode) ? props.darkMode.value : props.darkMode))
@@ -96,9 +156,40 @@ function parsePayload(res) {
   return res?.data?.datas ?? res?.data?.data ?? res?.data ?? {}
 }
 
+async function loadDevOpsData() {
+  await Promise.all([loadDevMetrics(30), loadVersionUpdates(), loadReleasePreview()])
+}
+
 async function loadListData() {
-  if (listMode.value === 'dev') await loadDevReports()
-  else await refreshMyReports()
+  if (listMode.value === 'dev') {
+    await loadDevReports(devReportsPagination.value.current_page)
+    await loadDevOpsData()
+  } else {
+    await Promise.all([
+      refreshMyReports(myReportsPagination.value.current_page),
+      loadUserVersionUpdates(userVersionUpdatesPagination.value.current_page),
+    ])
+  }
+}
+
+function onUserTab(tab) {
+  userTab.value = tab
+  if (tab === 'updates') {
+    loadUserVersionUpdates(userVersionUpdatesPagination.value.current_page)
+  }
+}
+
+async function onUserVersionsPage(page) {
+  await loadUserVersionUpdates(page)
+}
+
+async function onReportsPage(page) {
+  if (listMode.value === 'dev') await loadDevReports(page)
+  else await refreshMyReports(page)
+}
+
+async function onVersionsPage(page) {
+  await loadVersionUpdates(page)
 }
 
 function onNavigate(next) {
@@ -127,8 +218,19 @@ async function onAddComment(reportId, comment) {
 
 watch(listMode, () => {
   view.value = 'list'
+  devTab.value = 'reports'
+  userTab.value = 'reports'
   selectedReport.value = null
   loadListData()
+})
+
+watch(devTab, (tab) => {
+  if (listMode.value !== 'dev') return
+  if (tab === 'metrics' && !devMetrics.value) loadDevMetrics(30)
+  if (tab === 'versions') {
+    loadReleasePreview()
+    loadVersionUpdates(versionUpdatesPagination.value.current_page)
+  }
 })
 
 onMounted(async () => {

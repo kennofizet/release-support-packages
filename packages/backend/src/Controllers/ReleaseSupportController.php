@@ -3,6 +3,7 @@
 namespace Kennofizet\ReleaseSupport\Controllers;
 
 use Kennofizet\ReleaseSupport\Requests\AddReportCommentRequest;
+use Kennofizet\ReleaseSupport\Requests\CreateVersionReleaseRequest;
 use Kennofizet\ReleaseSupport\Requests\DevMetricsRequest;
 use Kennofizet\ReleaseSupport\Requests\ListReportsRequest;
 use Kennofizet\ReleaseSupport\Requests\SaveVersionUpdateRequest;
@@ -117,6 +118,30 @@ class ReleaseSupportController extends Controller
         return $this->apiResponseWithContext(['comment' => $comment], 201);
     }
 
+    public function versionUpdates(ListReportsRequest $request): JsonResponse
+    {
+        return $this->apiResponseWithContext(
+            $this->service->listPublicVersionUpdates($request->perPage()),
+        );
+    }
+
+    public function versionUpdateDetail(int $id): JsonResponse
+    {
+        $item = $this->service->getPublicVersionUpdateDetail($id);
+        if (!$item) {
+            return $this->apiErrorResponse('Version update not found', 404);
+        }
+
+        return $this->apiResponseWithContext(['item' => $item]);
+    }
+
+    public function devReleasePreview(): JsonResponse
+    {
+        $this->guardDevUser();
+
+        return $this->apiResponseWithContext($this->service->getReleasePreview());
+    }
+
     public function devVersionUpdates(ListReportsRequest $request): JsonResponse
     {
         $this->guardDevUser();
@@ -124,14 +149,29 @@ class ReleaseSupportController extends Controller
         return $this->apiResponseWithContext($data);
     }
 
-    public function devCreateVersionUpdate(SaveVersionUpdateRequest $request): JsonResponse
+    public function devVersionUpdateDetail(int $id): JsonResponse
+    {
+        $this->guardDevUser();
+        $item = $this->service->getVersionUpdateDetail($id);
+        if (!$item) {
+            return $this->apiErrorResponse('Version release not found', 404);
+        }
+
+        return $this->apiResponseWithContext(['item' => $item]);
+    }
+
+    public function devCreateVersionUpdate(CreateVersionReleaseRequest $request): JsonResponse
     {
         $this->guardDevUser();
         try {
-            $item = $this->service->saveVersionUpdate($request->validated());
+            $item = $this->service->createVersionRelease(
+                $request->validated(),
+                self::currentUserId(),
+            );
         } catch (\Throwable $e) {
             return $this->apiErrorResponse($e->getMessage(), 422);
         }
+
         return $this->apiResponseWithContext(['item' => $item], 201);
     }
 
@@ -139,11 +179,13 @@ class ReleaseSupportController extends Controller
     {
         $this->guardDevUser();
         try {
-            $item = $this->service->saveVersionUpdate($request->validated(), $id);
+            $this->service->saveVersionUpdate($request->validated(), $id);
+            $item = $this->service->getVersionUpdateDetail($id);
         } catch (\Throwable $e) {
             return $this->apiErrorResponse($e->getMessage(), 422);
         }
-        return $this->apiResponseWithContext(['item' => $item]);
+
+        return $this->apiResponseWithContext(['item' => $item ?? []]);
     }
 
     public function devMetrics(DevMetricsRequest $request): JsonResponse
