@@ -36,6 +36,8 @@ class ReleaseSupportService
         'app_version',
         'created_at',
         'meta',
+        'version_update_id',
+        'merged_at',
     ];
 
     public function __construct(
