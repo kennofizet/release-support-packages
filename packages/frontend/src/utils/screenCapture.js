@@ -1,9 +1,13 @@
 /**
  * Capture the visible viewport for annotated screenshots (release-support UI excluded).
- * iOS: save scroll before overlay opens; lock body scroll so capture matches what the user saw.
+ * Screenshot is taken before the draw overlay opens (see Widget) while scroll is natural.
+ *
+ * Fixed UI (e.g. sidebar with position:fixed) is captured in a second pass and composited
+ * at viewport coordinates so it does not scroll with the main document capture.
  */
 
-let lastScrollRootEl = null
+const CAPTURE_ROOT_ATTR = 'data-rs-capture-scroll-root'
+
 let scrollLockRestore = null
 
 function readWindowScroll() {
@@ -23,114 +27,181 @@ function readWindowScroll() {
   return { scrollX, scrollY, scrollingElement: se }
 }
 
-function findInnerScrollRoot() {
-  let best = null
-  let bestTop = 0
+function isIgnorableCaptureNode(el) {
+  return !(el instanceof HTMLElement) || Boolean(el.closest('.rs-ignore-capture'))
+}
 
-  for (const child of document.body?.children || []) {
-    if (!(child instanceof HTMLElement)) continue
-    if (child.closest?.('.rs-ignore-capture')) continue
-    const style = window.getComputedStyle(child)
-    if (!['auto', 'scroll', 'overlay'].includes(style.overflowY)) continue
-    if (child.scrollHeight <= child.clientHeight + 2) continue
-    if (child.scrollTop > bestTop) {
-      bestTop = child.scrollTop
-      best = child
-    }
-  }
-
-  return best
+function isVerticallyScrollable(el) {
+  const style = window.getComputedStyle(el)
+  if (!['auto', 'scroll', 'overlay'].includes(style.overflowY)) return false
+  return el.scrollHeight > el.clientHeight + 2
 }
 
 /**
- * Call immediately before opening the draw overlay (before scroll can jump on iOS).
+ * Inner scroll container only when the window itself is not scrolled.
+ */
+function findInnerScrollRoot(windowScrollY) {
+  if (windowScrollY > 8) {
+    return null
+  }
+
+  const cx = Math.min(window.innerWidth - 1, Math.max(1, window.innerWidth / 2))
+  const cy = Math.min(window.innerHeight - 1, Math.max(1, window.innerHeight / 2))
+  let el = document.elementFromPoint(cx, cy)
+
+  let best = null
+  let bestTop = 0
+
+  while (el && el !== document.documentElement) {
+    if (!isIgnorableCaptureNode(el) && el instanceof HTMLElement && isVerticallyScrollable(el)) {
+      if (el.scrollTop >= bestTop) {
+        bestTop = el.scrollTop
+        best = el
+      }
+    }
+    el = el.parentElement
+  }
+
+  return bestTop > 8 ? best : null
+}
+
+function clearMarkedScrollRoot() {
+  document.querySelectorAll(`[${CAPTURE_ROOT_ATTR}]`).forEach((node) => {
+    node.removeAttribute(CAPTURE_ROOT_ATTR)
+  })
+}
+
+function markScrollRoot(el) {
+  clearMarkedScrollRoot()
+  if (el) {
+    el.setAttribute(CAPTURE_ROOT_ATTR, '1')
+  }
+}
+
+function getMarkedScrollRoot() {
+  const marked = document.querySelector(`[${CAPTURE_ROOT_ATTR}="1"]`)
+  return marked instanceof HTMLElement ? marked : null
+}
+
+/**
+ * Top-level position:fixed roots (sidebar shell), not nested fixed children.
+ * @returns {HTMLElement[]}
+ */
+function collectFixedRoots(ignoreSelector) {
+  /** @type {HTMLElement[]} */
+  const roots = []
+
+  for (const el of document.querySelectorAll('body *')) {
+    if (!(el instanceof HTMLElement) || isIgnorableCaptureNode(el)) continue
+    if (window.getComputedStyle(el).position !== 'fixed') continue
+    if (el.parentElement && window.getComputedStyle(el.parentElement).position === 'fixed') {
+      continue
+    }
+    roots.push(el)
+  }
+
+  return roots
+}
+
+function isInsideFixedRoot(el, fixedRoots) {
+  return fixedRoots.some((root) => root === el || root.contains(el))
+}
+
+/**
+ * @param {HTMLElement} el
+ */
+function isFixedRootVisible(el) {
+  const rect = el.getBoundingClientRect()
+  if (rect.width < 2 || rect.height < 2) return false
+  if (rect.bottom < 0 || rect.right < 0) return false
+  if (rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false
+  return true
+}
+
+/**
+ * Call immediately before capture / opening the draw overlay.
  * @returns {ScrollCaptureState}
  */
 export function captureScrollState() {
   const { scrollX, scrollY } = readWindowScroll()
   const vv = window.visualViewport
-  const inner = findInnerScrollRoot()
+  const inner = findInnerScrollRoot(scrollY)
 
-  lastScrollRootEl =
-    inner && inner.scrollTop > Math.max(scrollY, 20) ? inner : null
+  markScrollRoot(inner)
+
+  const useInner = Boolean(inner)
 
   return {
-    scrollX: lastScrollRootEl ? lastScrollRootEl.scrollLeft : scrollX,
-    scrollY: lastScrollRootEl ? lastScrollRootEl.scrollTop : scrollY,
+    scrollX: useInner ? inner.scrollLeft : scrollX,
+    scrollY: useInner ? inner.scrollTop : scrollY,
     windowScrollX: scrollX,
     windowScrollY: scrollY,
     viewportWidth: Math.round(vv?.width ?? window.innerWidth),
     viewportHeight: Math.round(vv?.height ?? window.innerHeight),
-    useInnerRoot: Boolean(lastScrollRootEl),
+    useInnerRoot: useInner,
   }
 }
 
 /**
- * Freeze page scroll at the saved position while the draw overlay is open (iOS modal fix).
+ * Prevent scroll while drawing — does not use body position:fixed (avoids ghost/double layout).
  * @param {ScrollCaptureState | null | undefined} state
  */
 export function lockPageScrollForCapture(state) {
   unlockPageScrollForCapture()
 
-  const scrollY = state?.windowScrollY ?? state?.scrollY ?? window.scrollY
-  const scrollX = state?.windowScrollX ?? state?.scrollX ?? window.scrollX
+  const inner = getMarkedScrollRoot()
+  const useInner = Boolean(state?.useInnerRoot && inner)
 
   scrollLockRestore = {
-    body: {
-      position: document.body.style.position,
-      top: document.body.style.top,
-      left: document.body.style.left,
-      right: document.body.style.right,
-      width: document.body.style.width,
-      overflow: document.body.style.overflow,
-    },
-    html: {
-      overflow: document.documentElement.style.overflow,
-    },
-    scrollX,
-    scrollY,
+    windowScrollX: state?.windowScrollX ?? window.scrollX,
+    windowScrollY: state?.windowScrollY ?? window.scrollY,
+    bodyOverflow: document.body.style.overflow,
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverscroll: document.body.style.overscrollBehavior,
+    htmlOverscroll: document.documentElement.style.overscrollBehavior,
     inner: null,
   }
 
-  document.body.style.position = 'fixed'
-  document.body.style.top = `-${scrollY}px`
-  document.body.style.left = '0'
-  document.body.style.right = '0'
-  document.body.style.width = '100%'
   document.body.style.overflow = 'hidden'
   document.documentElement.style.overflow = 'hidden'
+  document.body.style.overscrollBehavior = 'none'
+  document.documentElement.style.overscrollBehavior = 'none'
 
-  if (lastScrollRootEl) {
+  if (useInner && inner) {
     scrollLockRestore.inner = {
-      el: lastScrollRootEl,
-      overflow: lastScrollRootEl.style.overflow,
-      scrollTop: lastScrollRootEl.scrollTop,
-      scrollLeft: lastScrollRootEl.scrollLeft,
+      el: inner,
+      overflow: inner.style.overflow,
+      overscrollBehavior: inner.style.overscrollBehavior,
+      scrollTop: inner.scrollTop,
+      scrollLeft: inner.scrollLeft,
     }
-    lastScrollRootEl.style.overflow = 'hidden'
+    inner.style.overflow = 'hidden'
+    inner.style.overscrollBehavior = 'none'
   }
+
+  window.scrollTo(scrollLockRestore.windowScrollX, scrollLockRestore.windowScrollY)
 }
 
 export function unlockPageScrollForCapture() {
   if (!scrollLockRestore) return
 
-  const { body, html, scrollX, scrollY, inner } = scrollLockRestore
+  const restore = scrollLockRestore
 
-  document.body.style.position = body.position
-  document.body.style.top = body.top
-  document.body.style.left = body.left
-  document.body.style.right = body.right
-  document.body.style.width = body.width
-  document.body.style.overflow = body.overflow
-  document.documentElement.style.overflow = html.overflow
-
-  if (inner?.el) {
-    inner.el.style.overflow = inner.overflow
-    inner.el.scrollTop = inner.scrollTop
-    inner.el.scrollLeft = inner.scrollLeft
+  if (restore.inner?.el) {
+    const { el, overflow, overscrollBehavior, scrollTop, scrollLeft } = restore.inner
+    el.style.overflow = overflow
+    el.style.overscrollBehavior = overscrollBehavior
+    el.scrollTop = scrollTop
+    el.scrollLeft = scrollLeft
   }
 
-  window.scrollTo(scrollX, scrollY)
+  document.body.style.overflow = restore.bodyOverflow || ''
+  document.documentElement.style.overflow = restore.htmlOverflow || ''
+  document.body.style.overscrollBehavior = restore.bodyOverscroll || ''
+  document.documentElement.style.overscrollBehavior = restore.htmlOverscroll || ''
+
+  window.scrollTo(restore.windowScrollX, restore.windowScrollY)
+  clearMarkedScrollRoot()
   scrollLockRestore = null
 }
 
@@ -145,9 +216,86 @@ export function unlockPageScrollForCapture() {
  * @property {boolean} useInnerRoot
  */
 
+function buildHtml2canvasOptions(ignoreSelector, fixedRoots, extra = {}) {
+  const scale = Math.min(1.25, window.devicePixelRatio || 1)
+
+  return {
+    ignoreElements: (el) => {
+      if (!(el instanceof Element)) return false
+      if (el.closest(ignoreSelector)) return true
+      if (fixedRoots.length && isInsideFixedRoot(el, fixedRoots)) return true
+      return false
+    },
+    useCORS: true,
+    allowTaint: true,
+    logging: false,
+    foreignObjectRendering: false,
+    scale,
+    backgroundColor: '#0f172a',
+    removeContainer: true,
+    ...extra,
+  }
+}
+
+/**
+ * Composite fixed layers (sidebar) onto the scrolled viewport capture.
+ * @param {HTMLCanvasElement} base
+ * @param {HTMLElement[]} fixedRoots
+ * @param {string} ignoreSelector
+ */
+async function compositeFixedLayers(base, fixedRoots, ignoreSelector) {
+  const { default: html2canvas } = await import('html2canvas')
+  const scale = Math.min(1.25, window.devicePixelRatio || 1)
+
+  const out = document.createElement('canvas')
+  out.width = base.width
+  out.height = base.height
+  const ctx = out.getContext('2d')
+  if (!ctx) return base
+
+  ctx.drawImage(base, 0, 0)
+
+  for (const el of fixedRoots) {
+    if (!isFixedRootVisible(el)) continue
+
+    const rect = el.getBoundingClientRect()
+    const width = Math.max(1, Math.ceil(rect.width))
+    const height = Math.max(1, Math.ceil(rect.height))
+
+    try {
+      const layer = await html2canvas(el, buildHtml2canvasOptions(ignoreSelector, [], {
+        scrollX: 0,
+        scrollY: 0,
+        width,
+        height,
+        windowWidth: width,
+        windowHeight: height,
+        backgroundColor: null,
+      }))
+
+      ctx.drawImage(
+        layer,
+        0,
+        0,
+        layer.width,
+        layer.height,
+        Math.round(rect.left * scale),
+        Math.round(rect.top * scale),
+        Math.round(rect.width * scale),
+        Math.round(rect.height * scale),
+      )
+    } catch {
+      /* skip layer if capture fails */
+    }
+  }
+
+  return out
+}
+
 /**
  * @param {string} [ignoreSelector]
  * @param {ScrollCaptureState | null | undefined} [scrollState]
+ * @returns {Promise<HTMLCanvasElement>}
  */
 export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture', scrollState = null) {
   const { default: html2canvas } = await import('html2canvas')
@@ -157,46 +305,37 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
   const w = Math.round(state.viewportWidth || window.innerWidth)
   const h = Math.round(state.viewportHeight || window.innerHeight)
 
-  const common = {
-    ignoreElements: (el) => {
-      if (!(el instanceof Element)) return false
-      return Boolean(el.closest(ignoreSelector))
-    },
-    useCORS: true,
-    allowTaint: true,
-    logging: false,
-    foreignObjectRendering: false,
-    scale: Math.min(1.25, window.devicePixelRatio || 1),
-  }
+  const fixedRoots = collectFixedRoots(ignoreSelector)
 
-  const inner = lastScrollRootEl
+  const inner = getMarkedScrollRoot()
   if (state.useInnerRoot && inner) {
-    const left = scrollX
-    const top = scrollY
-    return html2canvas(inner, {
-      ...common,
-      scrollX: -left,
-      scrollY: -top,
+    return html2canvas(inner, buildHtml2canvasOptions(ignoreSelector, [], {
+      scrollX: -Math.round(inner.scrollLeft),
+      scrollY: -Math.round(inner.scrollTop),
       width: inner.clientWidth,
       height: inner.clientHeight,
       windowWidth: inner.clientWidth,
       windowHeight: inner.clientHeight,
-      x: left,
-      y: top,
-    })
+    }))
   }
 
-  return html2canvas(document.documentElement, {
-    ...common,
-    width: w,
-    height: h,
-    windowWidth: w,
-    windowHeight: h,
-    scrollX: -scrollX,
-    scrollY: -scrollY,
-    x: scrollX,
-    y: scrollY,
-  })
+  const base = await html2canvas(
+    document.documentElement,
+    buildHtml2canvasOptions(ignoreSelector, fixedRoots, {
+      scrollX: -scrollX,
+      scrollY: -scrollY,
+      width: w,
+      height: h,
+      windowWidth: document.documentElement.clientWidth,
+      windowHeight: document.documentElement.clientHeight,
+    }),
+  )
+
+  if (!fixedRoots.length) {
+    return base
+  }
+
+  return compositeFixedLayers(base, fixedRoots, ignoreSelector)
 }
 
 export function compositeCanvases(backgroundCanvas, drawCanvas, quality = 0.82) {

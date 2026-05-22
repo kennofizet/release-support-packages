@@ -12,6 +12,7 @@
       :dark-mode="effectiveDarkMode"
       :labels="drawLabels"
       :scroll-state="drawScrollState"
+      :initial-snapshot="drawBackgroundSnapshot"
       @save="onDrawSaved"
       @cancel="onDrawCancel"
     />
@@ -57,7 +58,7 @@ import { useReleaseSupportTracker } from '../composables/useReleaseSupportTracke
 import { useReleaseSupportLabels } from '../composables/useReleaseSupportLabels'
 import { isOutdated } from '../utils/semver'
 import { getApiErrorMessage } from '../utils/apiErrorMessage'
-import { captureScrollState } from '../utils/screenCapture'
+import { capturePageScreenshot, captureScrollState } from '../utils/screenCapture'
 import ReleaseSupportFabHandle from './ReleaseSupportFabHandle.vue'
 import ReleaseSupportDrawOverlay from './ReleaseSupportDrawOverlay.vue'
 import ReleaseSupportFormModal from './ReleaseSupportFormModal.vue'
@@ -110,6 +111,8 @@ const latestUpdateText = computed(() => fmtLatestUpdate(bootstrapData.value.late
 const formOpen = ref(false)
 const screenDrawing = ref(false)
 const drawScrollState = ref(null)
+const drawBackgroundSnapshot = ref(null)
+const drawCaptureLoading = ref(false)
 const submitting = ref(false)
 const submitError = ref('')
 const successOpen = ref(false)
@@ -141,21 +144,34 @@ function closeForm() {
   formOpen.value = false
 }
 
-function openScreenDraw() {
+async function openScreenDraw() {
+  submitError.value = ''
   drawScrollState.value = captureScrollState()
+  drawBackgroundSnapshot.value = null
+  drawCaptureLoading.value = true
   formOpen.value = false
-  screenDrawing.value = true
+
+  try {
+    drawBackgroundSnapshot.value = await capturePageScreenshot('.rs-ignore-capture', drawScrollState.value)
+  } catch {
+    drawBackgroundSnapshot.value = null
+  } finally {
+    drawCaptureLoading.value = false
+    screenDrawing.value = true
+  }
 }
 
 function onDrawCancel() {
   screenDrawing.value = false
   drawScrollState.value = null
+  drawBackgroundSnapshot.value = null
 }
 
 function onDrawSaved(dataUrl) {
   if (dataUrl) drawings.value.push(dataUrl)
   screenDrawing.value = false
   drawScrollState.value = null
+  drawBackgroundSnapshot.value = null
   formOpen.value = true
 }
 
