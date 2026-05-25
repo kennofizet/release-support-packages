@@ -115,6 +115,13 @@ function isFixedRootVisible(el) {
   if (rect.width < 2 || rect.height < 2) return false
   if (rect.bottom < 0 || rect.right < 0) return false
   if (rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false
+  // Also skip elements that are technically laid out but invisible. The phone
+  // log showed `sidebar-backdrop` was being captured even when closed → ~1s of
+  // wasted html2canvas time on iOS.
+  const cs = window.getComputedStyle(el)
+  if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false
+  if (parseFloat(cs.opacity || '1') === 0) return false
+  if (cs.display === 'none') return false
   return true
 }
 
@@ -316,9 +323,12 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
 
   const inner = getMarkedScrollRoot()
   if (state.useInnerRoot && inner) {
+    // See comment on main capture below for why x/y + scrollX/Y:0.
     return html2canvas(inner, buildHtml2canvasOptions(ignoreSelector, [], scale, {
-      scrollX: -Math.round(inner.scrollLeft),
-      scrollY: -Math.round(inner.scrollTop),
+      x: Math.round(inner.scrollLeft),
+      y: Math.round(inner.scrollTop),
+      scrollX: 0,
+      scrollY: 0,
       width: inner.clientWidth,
       height: inner.clientHeight,
       windowWidth: inner.clientWidth,
@@ -326,11 +336,27 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
     }))
   }
 
+  // Use `x/y` (positive output-crop offset) with explicit `scrollX/Y: 0`,
+  // NOT the more common `scrollX: -scrollX, scrollY: -scrollY` trick. The
+  // latter relies on html2canvas's "assumed scroll position" code path which
+  // iOS WebKit silently ignores — it would always return the document top.
+  //
+  // html2canvas internally translates by (-x + scrollX, -y + scrollY) before
+  // drawing. Defaulting scrollX/Y to window.scrollX/Y would cancel out the
+  // crop, so we override them to 0. The result: canvas (0,0) maps to document
+  // (x, y) = the visible viewport — consistently across Chromium, Firefox,
+  // Safari desktop, iOS Safari and iOS Chrome.
+  //
+  // Fixed elements (assumed-scroll=0 → rendered at document 0,0) fall outside
+  // our crop region anyway, and we strip them via `ignoreElements` so the
+  // second pass can composite them at viewport coords.
   const base = await html2canvas(
     document.documentElement,
     buildHtml2canvasOptions(ignoreSelector, fixedRoots, scale, {
-      scrollX: -scrollX,
-      scrollY: -scrollY,
+      x: scrollX,
+      y: scrollY,
+      scrollX: 0,
+      scrollY: 0,
       width: w,
       height: h,
       windowWidth: document.documentElement.clientWidth,
