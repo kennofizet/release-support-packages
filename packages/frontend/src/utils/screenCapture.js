@@ -216,9 +216,14 @@ export function unlockPageScrollForCapture() {
  * @property {boolean} useInnerRoot
  */
 
-function buildHtml2canvasOptions(ignoreSelector, fixedRoots, extra = {}) {
-  const scale = Math.min(1.25, window.devicePixelRatio || 1)
+function detectCaptureScale() {
+  const isCoarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+  const narrow = window.innerWidth <= 768
+  if (isCoarse || narrow) return 0.55
+  return Math.min(1, window.devicePixelRatio || 1)
+}
 
+function buildHtml2canvasOptions(ignoreSelector, fixedRoots, scale, extra = {}) {
   return {
     ignoreElements: (el) => {
       if (!(el instanceof Element)) return false
@@ -233,6 +238,7 @@ function buildHtml2canvasOptions(ignoreSelector, fixedRoots, extra = {}) {
     scale,
     backgroundColor: '#0f172a',
     removeContainer: true,
+    imageTimeout: 1500,
     ...extra,
   }
 }
@@ -242,10 +248,10 @@ function buildHtml2canvasOptions(ignoreSelector, fixedRoots, extra = {}) {
  * @param {HTMLCanvasElement} base
  * @param {HTMLElement[]} fixedRoots
  * @param {string} ignoreSelector
+ * @param {number} scale
  */
-async function compositeFixedLayers(base, fixedRoots, ignoreSelector) {
+async function compositeFixedLayers(base, fixedRoots, ignoreSelector, scale) {
   const { default: html2canvas } = await import('html2canvas')
-  const scale = Math.min(1.25, window.devicePixelRatio || 1)
 
   const out = document.createElement('canvas')
   out.width = base.width
@@ -263,7 +269,7 @@ async function compositeFixedLayers(base, fixedRoots, ignoreSelector) {
     const height = Math.max(1, Math.ceil(rect.height))
 
     try {
-      const layer = await html2canvas(el, buildHtml2canvasOptions(ignoreSelector, [], {
+      const layer = await html2canvas(el, buildHtml2canvasOptions(ignoreSelector, [], scale, {
         scrollX: 0,
         scrollY: 0,
         width,
@@ -304,12 +310,13 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
   const scrollY = Math.round(state.scrollY || 0)
   const w = Math.round(state.viewportWidth || window.innerWidth)
   const h = Math.round(state.viewportHeight || window.innerHeight)
+  const scale = detectCaptureScale()
 
   const fixedRoots = collectFixedRoots(ignoreSelector)
 
   const inner = getMarkedScrollRoot()
   if (state.useInnerRoot && inner) {
-    return html2canvas(inner, buildHtml2canvasOptions(ignoreSelector, [], {
+    return html2canvas(inner, buildHtml2canvasOptions(ignoreSelector, [], scale, {
       scrollX: -Math.round(inner.scrollLeft),
       scrollY: -Math.round(inner.scrollTop),
       width: inner.clientWidth,
@@ -321,7 +328,7 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
 
   const base = await html2canvas(
     document.documentElement,
-    buildHtml2canvasOptions(ignoreSelector, fixedRoots, {
+    buildHtml2canvasOptions(ignoreSelector, fixedRoots, scale, {
       scrollX: -scrollX,
       scrollY: -scrollY,
       width: w,
@@ -335,7 +342,7 @@ export async function capturePageScreenshot(ignoreSelector = '.rs-ignore-capture
     return base
   }
 
-  return compositeFixedLayers(base, fixedRoots, ignoreSelector)
+  return compositeFixedLayers(base, fixedRoots, ignoreSelector, scale)
 }
 
 export function compositeCanvases(backgroundCanvas, drawCanvas, quality = 0.82) {

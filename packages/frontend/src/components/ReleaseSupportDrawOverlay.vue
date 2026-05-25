@@ -90,8 +90,6 @@ const props = defineProps({
   labels: { type: Object, required: true },
   /** Saved in parent before overlay opens — fixes iOS capturing top of page after scroll jump */
   scrollState: { type: Object, default: null },
-  /** Pre-captured canvas from parent (taken before overlay mounts) */
-  initialSnapshot: { type: Object, default: null },
 })
 
 const emit = defineEmits(['save', 'cancel'])
@@ -148,21 +146,7 @@ function fillPlaceholderBg() {
   ctx.fillRect(0, 0, bg.width, bg.height)
 }
 
-function applyInitialSnapshot() {
-  if (props.initialSnapshot && paintBackground(props.initialSnapshot)) {
-    captureFailed.value = false
-    capturing.value = false
-    return true
-  }
-  return false
-}
-
 function loadBackground() {
-  if (applyInitialSnapshot()) {
-    capturePromise = null
-    return Promise.resolve()
-  }
-
   capturing.value = true
   captureFailed.value = false
   bgSnapshotReady.value = false
@@ -290,14 +274,12 @@ watch(
     hasInk.value = false
     tool.value = 'pen'
     captureFailed.value = false
-    lockPageScrollForCapture(props.scrollState)
     await nextTick()
     resizeCanvases()
     clearInk()
     fillPlaceholderBg()
-    if (!applyInitialSnapshot()) {
-      await loadBackground()
-    }
+    await loadBackground()
+    lockPageScrollForCapture(props.scrollState)
   },
 )
 </script>
