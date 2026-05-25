@@ -1,6 +1,6 @@
 {
   "name": "@kennofizet/release-support-frontend",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Release support frontend package with runtime issue capture and draw-based reporter UI.",
   "main": "./src/index.js",
   "module": "./src/index.js",
